@@ -19,7 +19,14 @@ export const envSchema = z
     NODE_ENV: z
       .enum(["development", "test", "production"])
       .default("development"),
+    API_PORT: z.coerce.number().int().positive().default(4000),
+    API_URL: z.string().url().default("http://localhost:4000"),
+    NEXT_PUBLIC_API_URL: z.string().url().optional(),
+    CORS_ORIGIN: z.string().min(1).default("http://localhost:3000"),
     DATABASE_URL: z.string().min(1).optional(),
+    REDIS_URL: z.string().url().default("redis://localhost:6379"),
+    SESSION_COOKIE_NAME: z.string().min(1).default("session_id"),
+    SESSION_TTL_SECONDS: z.coerce.number().int().positive().default(604800),
   })
   .passthrough();
 
@@ -31,8 +38,23 @@ export interface AppConfig {
   env: Env["NODE_ENV"];
   isDevelopment: boolean;
   isProduction: boolean;
+  api: {
+    url: string;
+    publicUrl: string;
+    corsOrigin: string;
+  };
+  server: {
+    port: number;
+  };
   database: {
     url: string;
+  };
+  redis: {
+    url: string;
+  };
+  session: {
+    cookieName: string;
+    ttlSeconds: number;
   };
 }
 
@@ -100,8 +122,23 @@ export function getAppConfig(): AppConfig {
     env: env.NODE_ENV,
     isDevelopment: env.NODE_ENV === "development",
     isProduction: env.NODE_ENV === "production",
+    api: {
+      url: env.API_URL,
+      publicUrl: env.NEXT_PUBLIC_API_URL ?? env.API_URL,
+      corsOrigin: env.CORS_ORIGIN,
+    },
+    server: {
+      port: env.API_PORT,
+    },
     database: {
       url: requireEnv("DATABASE_URL"),
+    },
+    redis: {
+      url: env.REDIS_URL,
+    },
+    session: {
+      cookieName: env.SESSION_COOKIE_NAME,
+      ttlSeconds: env.SESSION_TTL_SECONDS,
     },
   };
 }
@@ -119,9 +156,36 @@ export const appConfig: AppConfig = {
   get isProduction() {
     return getEnv().NODE_ENV === "production";
   },
+  get api() {
+    const env = getEnv();
+
+    return {
+      url: env.API_URL,
+      publicUrl: env.NEXT_PUBLIC_API_URL ?? env.API_URL,
+      corsOrigin: env.CORS_ORIGIN,
+    };
+  },
+  get server() {
+    return {
+      port: getEnv().API_PORT,
+    };
+  },
   get database() {
     return {
       url: requireEnv("DATABASE_URL"),
+    };
+  },
+  get redis() {
+    return {
+      url: getEnv().REDIS_URL,
+    };
+  },
+  get session() {
+    const env = getEnv();
+
+    return {
+      cookieName: env.SESSION_COOKIE_NAME,
+      ttlSeconds: env.SESSION_TTL_SECONDS,
     };
   },
 };

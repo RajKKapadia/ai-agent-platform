@@ -9,6 +9,10 @@
     ".": {
       "types": "./src/index.ts",
       "default": "./src/index.ts"
+    },
+    "./runtime": {
+      "types": "./src/runtime.ts",
+      "default": "./src/runtime.ts"
     }
   },
   "scripts": {
