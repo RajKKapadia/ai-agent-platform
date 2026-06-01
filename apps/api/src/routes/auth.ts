@@ -6,8 +6,8 @@ import {
 } from "@repo/db";
 import { Router, type Router as ExpressRouter } from "express";
 import { z } from "zod";
-import { HttpError, parseBody } from "../errors.js";
-import { createSession, deleteSession, getStoredSession } from "../sessions.js";
+import { HttpError, parseBody } from "../errors";
+import { createSession, deleteSession, getStoredSession } from "../sessions";
 
 const registerSchema = z.object({
   name: z.string().trim().min(2, "Name must be at least 2 characters"),

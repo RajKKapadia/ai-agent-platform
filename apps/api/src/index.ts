@@ -1,5 +1,5 @@
 import { appConfig } from "@repo/config";
-import { createApp } from "./app.js";
+import { createApp } from "./app";
 
 const app = createApp();
 const port = appConfig.server.port;

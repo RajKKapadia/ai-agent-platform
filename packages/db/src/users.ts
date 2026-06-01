@@ -5,8 +5,8 @@ import {
 } from "node:crypto";
 import { promisify } from "node:util";
 import { eq } from "drizzle-orm";
-import { db } from "./client.js";
-import { users, type User, type UserRole } from "./schema.js";
+import { db } from "./client";
+import { users, type User, type UserRole } from "./schema";
 
 const passwordAlgorithm = "scrypt";
 const passwordKeyLength = 64;

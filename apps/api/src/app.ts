@@ -1,8 +1,8 @@
 import { appConfig } from "@repo/config";
 import cors, { type CorsOptions } from "cors";
 import express, { type Express } from "express";
-import { errorHandler } from "./errors.js";
-import { authRouter } from "./routes/auth.js";
+import { errorHandler } from "./errors";
+import { authRouter } from "./routes/auth";
 
 function getCorsOptions(): CorsOptions {
   const origin = appConfig.api.corsOrigin;

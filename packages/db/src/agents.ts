@@ -1,6 +1,6 @@
 import { asc, eq } from "drizzle-orm";
-import { db } from "./client.js";
-import { agents, type NewAgent } from "./schema.js";
+import { db } from "./client";
+import { agents, type NewAgent } from "./schema";
 
 export async function createAgent(input: NewAgent) {
   const [agent] = await db.insert(agents).values(input).returning();
