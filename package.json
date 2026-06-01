@@ -3,6 +3,9 @@
   "private": true,
   "scripts": {
     "build": "turbo run build",
+    "db:generate": "pnpm --filter @repo/db db:generate",
+    "db:migrate": "pnpm --filter @repo/db db:migrate",
+    "db:studio": "pnpm --filter @repo/db db:studio",
     "dev": "turbo run dev",
     "lint": "turbo run lint",
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
