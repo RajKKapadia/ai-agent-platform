@@ -27,6 +27,7 @@ export const envSchema = z
     REDIS_URL: z.string().url().default("redis://localhost:6379"),
     SESSION_COOKIE_NAME: z.string().min(1).default("session_id"),
     SESSION_TTL_SECONDS: z.coerce.number().int().positive().default(604800),
+    AGENT_SECRET_ENCRYPTION_KEY: z.string().min(1).optional(),
   })
   .passthrough();
 
@@ -55,6 +56,9 @@ export interface AppConfig {
   session: {
     cookieName: string;
     ttlSeconds: number;
+  };
+  secrets: {
+    agentEncryptionKey?: string;
   };
 }
 
@@ -140,6 +144,9 @@ export function getAppConfig(): AppConfig {
       cookieName: env.SESSION_COOKIE_NAME,
       ttlSeconds: env.SESSION_TTL_SECONDS,
     },
+    secrets: {
+      agentEncryptionKey: env.AGENT_SECRET_ENCRYPTION_KEY,
+    },
   };
 }
 
@@ -186,6 +193,11 @@ export const appConfig: AppConfig = {
     return {
       cookieName: env.SESSION_COOKIE_NAME,
       ttlSeconds: env.SESSION_TTL_SECONDS,
+    };
+  },
+  get secrets() {
+    return {
+      agentEncryptionKey: getEnv().AGENT_SECRET_ENCRYPTION_KEY,
     };
   },
 };

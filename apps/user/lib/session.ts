@@ -1,8 +1,10 @@
+import "server-only";
+
 import {
   getCurrentUser as fetchCurrentUser,
   logout as logoutApi,
-  type ApiUser,
 } from "@/lib/api";
+import type { ApiUser } from "@/lib/api-types";
 import { getRuntimeSessionConfig } from "@repo/config/runtime";
 import { cookies } from "next/headers";
 
@@ -33,7 +35,11 @@ export async function setSessionCookie(
   const sessionConfig = getRuntimeSessionConfig();
   const cookieStore = await cookies();
 
-  cookieStore.set(sessionConfig.cookieName, sessionId, getCookieOptions(expiresAt));
+  cookieStore.set(
+    sessionConfig.cookieName,
+    sessionId,
+    getCookieOptions(expiresAt),
+  );
 }
 
 export async function clearSessionCookie(): Promise<void> {

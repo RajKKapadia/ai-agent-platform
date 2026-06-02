@@ -1,5 +1,6 @@
 import { logoutAction } from "@/app/actions/auth";
 import { Button } from "@/components/ui/button";
+import { ButtonLink } from "@/components/ui/button-link";
 import {
   Card,
   CardContent,
@@ -7,16 +8,27 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Bot, LogOut, MessageSquare, ShieldCheck, UserRound } from "lucide-react";
+import { listAgents } from "@/lib/api";
+import { getCurrentUser, getSessionId } from "@/lib/session";
+import {
+  Bot,
+  LogOut,
+  MessageSquare,
+  ShieldCheck,
+  UserRound,
+} from "lucide-react";
+import Link from "next/link";
 import { redirect } from "next/navigation";
-import { getCurrentUser } from "@/lib/session";
 
 export default async function DashboardPage() {
   const user = await getCurrentUser();
+  const sessionId = await getSessionId();
 
-  if (!user) {
+  if (!user || !sessionId) {
     redirect("/login");
   }
+
+  const agents = await listAgents(sessionId);
 
   return (
     <main className="min-h-svh bg-zinc-50">
@@ -43,20 +55,31 @@ export default async function DashboardPage() {
             <CardTitle>Welcome back, {user.name}</CardTitle>
             <CardDescription>{user.email}</CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-5">
+            <div className="flex flex-wrap gap-3">
+              <ButtonLink href="/agents">
+                <Bot className="size-4" />
+                Agents
+              </ButtonLink>
+              <ButtonLink href="/agents/new" variant="outline">
+                New agent
+              </ButtonLink>
+            </div>
             <div className="grid gap-4 sm:grid-cols-2">
-              <div className="rounded-md border border-zinc-200 p-4">
-                <Bot className="mb-3 size-5 text-zinc-700" />
-                <p className="font-medium text-zinc-950">Agents</p>
-                <p className="mt-1 text-sm text-zinc-500">
-                  Agent management will live here.
-                </p>
-              </div>
+              {agents.slice(0, 4).map((agent) => (
+                <Link href={`/agents/${agent.id}`} key={agent.id}>
+                  <div className="h-full rounded-md border border-zinc-200 p-4 transition-colors hover:border-zinc-300">
+                    <Bot className="mb-3 size-5 text-zinc-700" />
+                    <p className="font-medium text-zinc-950">{agent.name}</p>
+                    <p className="mt-1 text-sm text-zinc-500">{agent.model}</p>
+                  </div>
+                </Link>
+              ))}
               <div className="rounded-md border border-zinc-200 p-4">
                 <MessageSquare className="mb-3 size-5 text-zinc-700" />
                 <p className="font-medium text-zinc-950">Conversations</p>
                 <p className="mt-1 text-sm text-zinc-500">
-                  Conversation history will be connected next.
+                  Conversation history stays here.
                 </p>
               </div>
             </div>
@@ -72,9 +95,7 @@ export default async function DashboardPage() {
             <div className="flex items-center gap-3">
               <UserRound className="size-5 text-zinc-600" />
               <div>
-                <p className="text-sm font-medium text-zinc-950">
-                  {user.name}
-                </p>
+                <p className="text-sm font-medium text-zinc-950">{user.name}</p>
                 <p className="text-sm text-zinc-500">{user.id}</p>
               </div>
             </div>

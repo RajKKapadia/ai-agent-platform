@@ -12,18 +12,22 @@
     "start": "tsx src/index.ts"
   },
   "dependencies": {
+    "@openai/agents": "^0.11.6",
     "@repo/config": "workspace:*",
     "@repo/db": "workspace:*",
     "cors": "^2.8.5",
     "express": "^4.21.2",
+    "multer": "^2.1.1",
+    "openai": "^6.39.1",
     "redis": "^4.7.0",
-    "zod": "^3.24.1"
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@repo/eslint-config": "workspace:*",
     "@repo/typescript-config": "workspace:*",
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
+    "@types/multer": "^2.1.0",
     "@types/node": "^22.15.3",
     "eslint": "^9.39.1",
     "tsx": "^4.20.6",
