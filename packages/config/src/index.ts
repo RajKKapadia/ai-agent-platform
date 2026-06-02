@@ -25,6 +25,10 @@ export const envSchema = z
     CORS_ORIGIN: z.string().min(1).default("http://localhost:3000"),
     DATABASE_URL: z.string().min(1).optional(),
     REDIS_URL: z.string().url().default("redis://localhost:6379"),
+    META_GRAPH_API_BASE_URL: z
+      .string()
+      .url()
+      .default("https://graph.facebook.com/v25.0"),
     SESSION_COOKIE_NAME: z.string().min(1).default("session_id"),
     SESSION_TTL_SECONDS: z.coerce.number().int().positive().default(604800),
     AGENT_SECRET_ENCRYPTION_KEY: z.string().min(1).optional(),
@@ -52,6 +56,9 @@ export interface AppConfig {
   };
   redis: {
     url: string;
+  };
+  meta: {
+    graphApiBaseUrl: string;
   };
   session: {
     cookieName: string;
@@ -140,6 +147,9 @@ export function getAppConfig(): AppConfig {
     redis: {
       url: env.REDIS_URL,
     },
+    meta: {
+      graphApiBaseUrl: env.META_GRAPH_API_BASE_URL,
+    },
     session: {
       cookieName: env.SESSION_COOKIE_NAME,
       ttlSeconds: env.SESSION_TTL_SECONDS,
@@ -185,6 +195,11 @@ export const appConfig: AppConfig = {
   get redis() {
     return {
       url: getEnv().REDIS_URL,
+    };
+  },
+  get meta() {
+    return {
+      graphApiBaseUrl: getEnv().META_GRAPH_API_BASE_URL,
     };
   },
   get session() {

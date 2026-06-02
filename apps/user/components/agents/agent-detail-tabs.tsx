@@ -1,14 +1,18 @@
 "use client";
 
 import {
+  deleteConnectionAction,
   deleteKnowledgeFileAction,
   deleteMcpServerAction,
   deleteToolAction,
 } from "@/app/actions/agents";
 import {
+  CopyValue,
   KnowledgeUploadForm,
   McpServerCreateForm,
   ToolCreateForm,
+  WhatsAppConnectionEditForm,
+  WhatsAppConnectionCreateForm,
 } from "@/components/agents/agent-resource-forms";
 import { Button } from "@/components/ui/button";
 import {
@@ -24,6 +28,8 @@ import {
   Bot,
   Database,
   FileText,
+  MessageCircle,
+  Pencil,
   Plug,
   ShieldCheck,
   Trash2,
@@ -45,10 +51,16 @@ function formatBytes(bytes: number) {
 
 export function AgentDetailTabs({ details }: { details: AgentDetails }) {
   const [activeTab, setActiveTab] = useState("overview");
+  const [editingConnectionId, setEditingConnectionId] = useState<
+    string | null
+  >(null);
+  const whatsAppConnection = details.connections.find(
+    (connection) => connection.channel === "whatsapp",
+  );
 
   return (
     <Tabs onValueChange={setActiveTab} value={activeTab}>
-      <TabsList>
+      <TabsList className="sm:grid-cols-5">
         <TabsTrigger value="overview">
           <Bot className="size-4 shrink-0" />
           <span className="min-w-0 truncate">Overview</span>
@@ -72,6 +84,13 @@ export function AgentDetailTabs({ details }: { details: AgentDetails }) {
           <span className="min-w-0 truncate">MCP</span>
           <span className="shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-600 group-aria-selected:bg-white">
             {details.mcpServers.length}
+          </span>
+        </TabsTrigger>
+        <TabsTrigger value="connections">
+          <MessageCircle className="size-4 shrink-0" />
+          <span className="min-w-0 truncate">Connections</span>
+          <span className="shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-600 group-aria-selected:bg-white">
+            {details.connections.length}
           </span>
         </TabsTrigger>
       </TabsList>
@@ -272,6 +291,93 @@ export function AgentDetailTabs({ details }: { details: AgentDetails }) {
                 ))
               ) : (
                 <p className="p-3 text-sm text-zinc-500">No MCP servers</p>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      </TabsContent>
+
+      <TabsContent value="connections">
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-lg">
+              <MessageCircle className="size-5 text-zinc-700" />
+              Connections
+            </CardTitle>
+            <CardDescription>
+              {details.connections.length} channel connections
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            {!whatsAppConnection ? (
+              <WhatsAppConnectionCreateForm agentId={details.agent.id} />
+            ) : null}
+            <div className="divide-y divide-zinc-200 rounded-md border border-zinc-200">
+              {details.connections.length > 0 ? (
+                details.connections.map((connection) => (
+                  <div className="space-y-3 p-3" key={connection.id}>
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium text-zinc-950">
+                          {connection.name}
+                        </p>
+                        <p className="text-sm text-zinc-500">
+                          {connection.channel} · {connection.status} · phone{" "}
+                          {connection.externalId}
+                        </p>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-2">
+                        <Button
+                          onClick={() =>
+                            setEditingConnectionId((currentId) =>
+                              currentId === connection.id
+                                ? null
+                                : connection.id,
+                            )
+                          }
+                          size="sm"
+                          type="button"
+                          variant="outline"
+                        >
+                          <Pencil className="size-4" />
+                        </Button>
+                        <form
+                          action={deleteConnectionAction.bind(
+                            null,
+                            details.agent.id,
+                            connection.id,
+                          )}
+                        >
+                          <Button size="sm" type="submit" variant="outline">
+                            <Trash2 className="size-4" />
+                          </Button>
+                        </form>
+                      </div>
+                    </div>
+                    {editingConnectionId === connection.id ? (
+                      <WhatsAppConnectionEditForm
+                        agentId={details.agent.id}
+                        connection={connection}
+                        onCancel={() => setEditingConnectionId(null)}
+                      />
+                    ) : (
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <CopyValue
+                          label="Webhook URL"
+                          value={connection.webhookUrl}
+                        />
+                        <CopyValue
+                          label="Verification token"
+                          value={connection.verificationToken}
+                        />
+                      </div>
+                    )}
+                  </div>
+                ))
+              ) : (
+                <p className="p-3 text-sm text-zinc-500">
+                  No channel connections
+                </p>
               )}
             </div>
           </CardContent>

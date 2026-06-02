@@ -4,15 +4,18 @@ import {
   ApiError,
   createAgent,
   createAgentMcpServer,
+  createWhatsAppConnection,
   createAgentTool,
+  deleteAgentConnection,
   deleteAgentKnowledgeFile,
   deleteAgentMcpServer,
   deleteAgentTool,
   generateAgentGuardrail,
   uploadAgentKnowledgeFile,
+  updateWhatsAppConnection,
   validateOpenAIKey,
 } from "@/lib/api";
-import type { CreateAgentInput } from "@/lib/api-types";
+import type { ApiAgentConnection, CreateAgentInput } from "@/lib/api-types";
 import { getSessionId } from "@/lib/session";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
@@ -49,6 +52,28 @@ const createMcpServerSchema = z.object({
   requireApproval: z.enum(["never", "always"]),
   enabled: z.boolean().default(true),
   toolFilter: z.string().trim().optional(),
+});
+
+const createWhatsAppConnectionSchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(2, "Connection name must be at least 2 characters"),
+  phoneNumberId: z.string().trim().min(1, "Phone number id is required"),
+  accessToken: z.string().trim().min(1, "Access token is required"),
+  appId: z.string().trim().min(1, "App id is required"),
+  appSecret: z.string().trim().min(1, "App secret is required"),
+});
+
+const updateWhatsAppConnectionSchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(2, "Connection name must be at least 2 characters"),
+  phoneNumberId: z.string().trim().min(1, "Phone number id is required"),
+  accessToken: z.string().trim().optional(),
+  appId: z.string().trim().min(1, "App id is required"),
+  appSecret: z.string().trim().optional(),
 });
 
 async function requireSessionId(): Promise<string> {
@@ -179,6 +204,89 @@ export async function deleteKnowledgeFileAction(
 ) {
   const sessionId = await requireSessionId();
   await deleteAgentKnowledgeFile(sessionId, agentId, fileId);
+  revalidatePath(`/agents/${agentId}`);
+}
+
+export async function createWhatsAppConnectionAction(
+  agentId: string,
+  _previousState: AgentActionResult<{ connection: ApiAgentConnection }>,
+  formData: FormData,
+): Promise<AgentActionResult<{ connection: ApiAgentConnection }>> {
+  const parsed = createWhatsAppConnectionSchema.safeParse({
+    name: getString(formData, "name"),
+    phoneNumberId: getString(formData, "phoneNumberId"),
+    accessToken: getString(formData, "accessToken"),
+    appId: getString(formData, "appId"),
+    appSecret: getString(formData, "appSecret"),
+  });
+
+  if (!parsed.success) {
+    return { fieldErrors: parsed.error.flatten().fieldErrors };
+  }
+
+  try {
+    const sessionId = await requireSessionId();
+    const connection = await createWhatsAppConnection(
+      sessionId,
+      agentId,
+      parsed.data,
+    );
+
+    revalidatePath(`/agents/${agentId}`);
+
+    return {
+      data: { connection },
+      success: true,
+    };
+  } catch (error) {
+    return actionError(error);
+  }
+}
+
+export async function updateWhatsAppConnectionAction(
+  agentId: string,
+  connectionId: string,
+  _previousState: AgentActionResult<{ connection: ApiAgentConnection }>,
+  formData: FormData,
+): Promise<AgentActionResult<{ connection: ApiAgentConnection }>> {
+  const parsed = updateWhatsAppConnectionSchema.safeParse({
+    name: getString(formData, "name"),
+    phoneNumberId: getString(formData, "phoneNumberId"),
+    accessToken: getString(formData, "accessToken") || undefined,
+    appId: getString(formData, "appId"),
+    appSecret: getString(formData, "appSecret") || undefined,
+  });
+
+  if (!parsed.success) {
+    return { fieldErrors: parsed.error.flatten().fieldErrors };
+  }
+
+  try {
+    const sessionId = await requireSessionId();
+    const connection = await updateWhatsAppConnection(
+      sessionId,
+      agentId,
+      connectionId,
+      parsed.data,
+    );
+
+    revalidatePath(`/agents/${agentId}`);
+
+    return {
+      data: { connection },
+      success: true,
+    };
+  } catch (error) {
+    return actionError(error);
+  }
+}
+
+export async function deleteConnectionAction(
+  agentId: string,
+  connectionId: string,
+) {
+  const sessionId = await requireSessionId();
+  await deleteAgentConnection(sessionId, agentId, connectionId);
   revalidatePath(`/agents/${agentId}`);
 }
 

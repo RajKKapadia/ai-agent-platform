@@ -78,11 +78,29 @@ export interface ApiMcpServer {
   updatedAt: string;
 }
 
+export interface ApiAgentConnection {
+  id: string;
+  agentId: string;
+  userId: string;
+  channel: "whatsapp";
+  name: string;
+  status: "pending" | "active" | "disabled";
+  externalId: string;
+  appId: string;
+  accessTokenLastFour: string;
+  verificationToken: string;
+  webhookUrl: string;
+  metadata: Record<string, unknown> | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface AgentDetails {
   agent: ApiAgent;
   knowledgeFiles: ApiKnowledgeFile[];
   tools: ApiAgentTool[];
   mcpServers: ApiMcpServer[];
+  connections: ApiAgentConnection[];
 }
 
 export interface CreateAgentInput {
@@ -109,4 +127,22 @@ export interface CreateMcpServerInput {
   requireApproval: "never" | "always";
   enabled: boolean;
   toolFilter: Record<string, unknown>;
+}
+
+export interface CreateWhatsAppConnectionInput {
+  name: string;
+  phoneNumberId: string;
+  accessToken: string;
+  appId: string;
+  appSecret: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface UpdateWhatsAppConnectionInput {
+  name: string;
+  phoneNumberId: string;
+  appId: string;
+  accessToken?: string;
+  appSecret?: string;
+  metadata?: Record<string, unknown>;
 }

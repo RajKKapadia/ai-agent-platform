@@ -2,6 +2,7 @@ import "server-only";
 
 import type {
   AgentDetails,
+  ApiAgentConnection,
   ApiAgent,
   ApiAgentTool,
   ApiKnowledgeFile,
@@ -10,14 +11,17 @@ import type {
   AuthResponse,
   CreateAgentInput,
   CreateMcpServerInput,
+  CreateWhatsAppConnectionInput,
   CreateToolInput,
   LoginInput,
   RegisterInput,
+  UpdateWhatsAppConnectionInput,
 } from "@/lib/api-types";
 import { getRuntimeApiConfig } from "@repo/config/runtime";
 
 export type {
   AgentDetails,
+  ApiAgentConnection,
   ApiAgent,
   ApiAgentTool,
   ApiKnowledgeFile,
@@ -26,9 +30,11 @@ export type {
   AuthResponse,
   CreateAgentInput,
   CreateMcpServerInput,
+  CreateWhatsAppConnectionInput,
   CreateToolInput,
   LoginInput,
   RegisterInput,
+  UpdateWhatsAppConnectionInput,
 } from "@/lib/api-types";
 
 interface UserResponse {
@@ -61,6 +67,10 @@ interface ToolResponse {
 
 interface McpServerResponse {
   mcpServer: ApiMcpServer;
+}
+
+interface ConnectionResponse {
+  connection: ApiAgentConnection;
 }
 
 export class ApiError extends Error {
@@ -250,6 +260,55 @@ export async function deleteAgentKnowledgeFile(
     method: "DELETE",
     headers: authHeaders(sessionId),
   });
+}
+
+export async function createWhatsAppConnection(
+  sessionId: string,
+  agentId: string,
+  input: CreateWhatsAppConnectionInput,
+): Promise<ApiAgentConnection> {
+  const response = await requestApi<ConnectionResponse>(
+    `/agents/${agentId}/connections/whatsapp`,
+    {
+      method: "POST",
+      headers: authHeaders(sessionId),
+      body: JSON.stringify(input),
+    },
+  );
+
+  return response.connection;
+}
+
+export async function deleteAgentConnection(
+  sessionId: string,
+  agentId: string,
+  connectionId: string,
+): Promise<void> {
+  await requestApi<{ ok: true }>(
+    `/agents/${agentId}/connections/${connectionId}`,
+    {
+      method: "DELETE",
+      headers: authHeaders(sessionId),
+    },
+  );
+}
+
+export async function updateWhatsAppConnection(
+  sessionId: string,
+  agentId: string,
+  connectionId: string,
+  input: UpdateWhatsAppConnectionInput,
+): Promise<ApiAgentConnection> {
+  const response = await requestApi<ConnectionResponse>(
+    `/agents/${agentId}/connections/${connectionId}`,
+    {
+      method: "PATCH",
+      headers: authHeaders(sessionId),
+      body: JSON.stringify(input),
+    },
+  );
+
+  return response.connection;
 }
 
 export async function createAgentTool(

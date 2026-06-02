@@ -1,14 +1,30 @@
 import { and, asc, desc, eq } from "drizzle-orm";
 import { db } from "./client";
 import {
+  agentConnections,
   agentKnowledgeFiles,
   agentMcpServers,
+  agentSessionItems,
   agentTools,
   agents,
+  channelConversations,
+  connectionEvents,
+  conversations,
+  messages,
+  type AgentConnection,
+  type AgentSessionItem,
+  type ChannelConversation,
+  type ConnectionEvent,
   type NewAgent,
+  type NewAgentConnection,
+  type NewAgentSessionItem,
+  type NewChannelConversation,
+  type NewConnectionEvent,
   type NewAgentKnowledgeFile,
   type NewAgentMcpServer,
   type NewAgentTool,
+  type NewConversation,
+  type NewMessage,
 } from "./schema";
 
 export interface CreateAgentRecordInput {
@@ -73,6 +89,64 @@ export interface UpdateMcpServerInput {
   enabled?: boolean;
   toolFilter?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
+}
+
+export interface CreateAgentConnectionInput {
+  agentId: string;
+  userId: string;
+  channel: NewAgentConnection["channel"];
+  name: string;
+  status?: NewAgentConnection["status"];
+  externalId: string;
+  appId: string;
+  accessTokenCiphertext: string;
+  accessTokenIv: string;
+  accessTokenAuthTag: string;
+  accessTokenLastFour: string;
+  appSecretCiphertext: string;
+  appSecretIv: string;
+  appSecretAuthTag: string;
+  verificationTokenCiphertext: string;
+  verificationTokenIv: string;
+  verificationTokenAuthTag: string;
+  verificationTokenHash: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface UpdateAgentConnectionInput {
+  name?: string;
+  status?: NewAgentConnection["status"];
+  externalId?: string;
+  appId?: string;
+  accessTokenCiphertext?: string;
+  accessTokenIv?: string;
+  accessTokenAuthTag?: string;
+  accessTokenLastFour?: string;
+  appSecretCiphertext?: string;
+  appSecretIv?: string;
+  appSecretAuthTag?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface CreateConnectionEventInput {
+  connectionId: string;
+  externalEventId: string;
+  eventType: string;
+  status?: NewConnectionEvent["status"];
+  payload?: Record<string, unknown>;
+}
+
+export interface EnsureChannelConversationInput {
+  connection: AgentConnection;
+  externalContactId: string;
+  displayName?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+export interface ConnectionEventStatusInput {
+  status: NewConnectionEvent["status"];
+  channelConversationId?: string | null;
+  error?: string | null;
 }
 
 function compactObject<T extends Record<string, unknown>>(input: T): T {
@@ -334,4 +408,392 @@ export async function deleteAgentMcpServer(id: string, agentId: string) {
     .returning();
 
   return server ?? null;
+}
+
+export async function listAgentConnections(agentId: string) {
+  return db
+    .select()
+    .from(agentConnections)
+    .where(eq(agentConnections.agentId, agentId))
+    .orderBy(desc(agentConnections.createdAt));
+}
+
+export async function getAgentConnectionById(id: string) {
+  const [connection] = await db
+    .select()
+    .from(agentConnections)
+    .where(eq(agentConnections.id, id));
+
+  return connection ?? null;
+}
+
+export async function getAgentConnectionByIdForAgent(
+  id: string,
+  agentId: string,
+) {
+  const [connection] = await db
+    .select()
+    .from(agentConnections)
+    .where(
+      and(eq(agentConnections.id, id), eq(agentConnections.agentId, agentId)),
+    );
+
+  return connection ?? null;
+}
+
+export async function getAgentConnectionByVerificationTokenHash(
+  verificationTokenHash: string,
+) {
+  const [connection] = await db
+    .select()
+    .from(agentConnections)
+    .where(eq(agentConnections.verificationTokenHash, verificationTokenHash));
+
+  return connection ?? null;
+}
+
+export async function getWhatsAppConnectionByPhoneNumberId(
+  phoneNumberId: string,
+) {
+  const [connection] = await db
+    .select()
+    .from(agentConnections)
+    .where(
+      and(
+        eq(agentConnections.channel, "whatsapp"),
+        eq(agentConnections.externalId, phoneNumberId),
+      ),
+    );
+
+  return connection ?? null;
+}
+
+export async function createAgentConnection(
+  input: CreateAgentConnectionInput,
+) {
+  const values: NewAgentConnection = {
+    agentId: input.agentId,
+    userId: input.userId,
+    channel: input.channel,
+    name: input.name,
+    status: input.status ?? "pending",
+    externalId: input.externalId,
+    appId: input.appId,
+    accessTokenCiphertext: input.accessTokenCiphertext,
+    accessTokenIv: input.accessTokenIv,
+    accessTokenAuthTag: input.accessTokenAuthTag,
+    accessTokenLastFour: input.accessTokenLastFour,
+    appSecretCiphertext: input.appSecretCiphertext,
+    appSecretIv: input.appSecretIv,
+    appSecretAuthTag: input.appSecretAuthTag,
+    verificationTokenCiphertext: input.verificationTokenCiphertext,
+    verificationTokenIv: input.verificationTokenIv,
+    verificationTokenAuthTag: input.verificationTokenAuthTag,
+    verificationTokenHash: input.verificationTokenHash,
+    metadata: input.metadata ?? {},
+  };
+
+  const [connection] = await db
+    .insert(agentConnections)
+    .values(values)
+    .returning();
+
+  if (!connection) {
+    throw new Error("Failed to create agent connection");
+  }
+
+  return connection;
+}
+
+export async function markAgentConnectionActive(id: string) {
+  const [connection] = await db
+    .update(agentConnections)
+    .set({ status: "active", updatedAt: new Date() })
+    .where(eq(agentConnections.id, id))
+    .returning();
+
+  return connection ?? null;
+}
+
+export async function deleteAgentConnection(id: string, agentId: string) {
+  const [connection] = await db
+    .delete(agentConnections)
+    .where(
+      and(eq(agentConnections.id, id), eq(agentConnections.agentId, agentId)),
+    )
+    .returning();
+
+  return connection ?? null;
+}
+
+export async function updateAgentConnection(
+  id: string,
+  agentId: string,
+  input: UpdateAgentConnectionInput,
+) {
+  const [connection] = await db
+    .update(agentConnections)
+    .set(compactObject({ ...input, updatedAt: new Date() }))
+    .where(
+      and(eq(agentConnections.id, id), eq(agentConnections.agentId, agentId)),
+    )
+    .returning();
+
+  return connection ?? null;
+}
+
+export async function getConnectionEventById(id: string) {
+  const [event] = await db
+    .select()
+    .from(connectionEvents)
+    .where(eq(connectionEvents.id, id));
+
+  return event ?? null;
+}
+
+export async function createConnectionEventIfNew(
+  input: CreateConnectionEventInput,
+): Promise<{ event: ConnectionEvent; created: boolean }> {
+  const values: NewConnectionEvent = {
+    connectionId: input.connectionId,
+    externalEventId: input.externalEventId,
+    eventType: input.eventType,
+    status: input.status ?? "queued",
+    payload: input.payload ?? {},
+  };
+
+  const [createdEvent] = await db
+    .insert(connectionEvents)
+    .values(values)
+    .onConflictDoNothing({
+      target: [
+        connectionEvents.connectionId,
+        connectionEvents.externalEventId,
+      ],
+    })
+    .returning();
+
+  if (createdEvent) {
+    return { event: createdEvent, created: true };
+  }
+
+  const [event] = await db
+    .select()
+    .from(connectionEvents)
+    .where(
+      and(
+        eq(connectionEvents.connectionId, input.connectionId),
+        eq(connectionEvents.externalEventId, input.externalEventId),
+      ),
+    );
+
+  if (!event) {
+    throw new Error("Failed to load connection event");
+  }
+
+  return { event, created: false };
+}
+
+export async function updateConnectionEventStatus(
+  id: string,
+  input: ConnectionEventStatusInput,
+) {
+  const [event] = await db
+    .update(connectionEvents)
+    .set(
+      compactObject({
+        status: input.status,
+        channelConversationId: input.channelConversationId,
+        error: input.error,
+        updatedAt: new Date(),
+      }),
+    )
+    .where(eq(connectionEvents.id, id))
+    .returning();
+
+  return event ?? null;
+}
+
+export async function createConversationRecord(input: NewConversation) {
+  const [conversation] = await db
+    .insert(conversations)
+    .values(input)
+    .returning();
+
+  if (!conversation) {
+    throw new Error("Failed to create conversation");
+  }
+
+  return conversation;
+}
+
+export async function createMessageRecord(input: NewMessage) {
+  const [message] = await db.insert(messages).values(input).returning();
+
+  if (!message) {
+    throw new Error("Failed to create message");
+  }
+
+  return message;
+}
+
+export async function getChannelConversation(
+  connectionId: string,
+  externalContactId: string,
+) {
+  const [channelConversation] = await db
+    .select()
+    .from(channelConversations)
+    .where(
+      and(
+        eq(channelConversations.connectionId, connectionId),
+        eq(channelConversations.externalContactId, externalContactId),
+      ),
+    );
+
+  return channelConversation ?? null;
+}
+
+export async function ensureChannelConversation(
+  input: EnsureChannelConversationInput,
+): Promise<ChannelConversation> {
+  const existing = await getChannelConversation(
+    input.connection.id,
+    input.externalContactId,
+  );
+
+  if (existing) {
+    return existing;
+  }
+
+  return db.transaction(async (transaction) => {
+    const conversationValues: NewConversation = {
+      agentId: input.connection.agentId,
+      userId: input.connection.userId,
+      title: input.displayName ?? input.externalContactId,
+      metadata: {
+        channel: input.connection.channel,
+        connectionId: input.connection.id,
+        externalContactId: input.externalContactId,
+        ...(input.metadata ?? {}),
+      },
+    };
+    const [conversation] = await transaction
+      .insert(conversations)
+      .values(conversationValues)
+      .returning();
+
+    if (!conversation) {
+      throw new Error("Failed to create conversation");
+    }
+
+    const channelConversationValues: NewChannelConversation = {
+      connectionId: input.connection.id,
+      conversationId: conversation.id,
+      externalContactId: input.externalContactId,
+      displayName: input.displayName,
+      metadata: input.metadata ?? {},
+    };
+    const [channelConversation] = await transaction
+      .insert(channelConversations)
+      .values(channelConversationValues)
+      .returning();
+
+    if (!channelConversation) {
+      throw new Error("Failed to create channel conversation");
+    }
+
+    return channelConversation;
+  });
+}
+
+export async function listAgentSessionItems(input: {
+  conversationId: string;
+  limit?: number;
+}): Promise<AgentSessionItem[]> {
+  if (input.limit && input.limit > 0) {
+    const items = await db
+      .select()
+      .from(agentSessionItems)
+      .where(eq(agentSessionItems.conversationId, input.conversationId))
+      .orderBy(desc(agentSessionItems.sequence))
+      .limit(input.limit);
+
+    return items.reverse();
+  }
+
+  return db
+    .select()
+    .from(agentSessionItems)
+    .where(eq(agentSessionItems.conversationId, input.conversationId))
+    .orderBy(asc(agentSessionItems.sequence));
+}
+
+export async function appendAgentSessionItems(input: {
+  conversationId: string;
+  sessionId: string;
+  items: Array<Record<string, unknown>>;
+}): Promise<AgentSessionItem[]> {
+  if (input.items.length === 0) {
+    return [];
+  }
+
+  return db.transaction(async (transaction) => {
+    const [lastItem] = await transaction
+      .select({ sequence: agentSessionItems.sequence })
+      .from(agentSessionItems)
+      .where(eq(agentSessionItems.conversationId, input.conversationId))
+      .orderBy(desc(agentSessionItems.sequence))
+      .limit(1);
+    const firstSequence = (lastItem?.sequence ?? 0) + 1;
+    const values: NewAgentSessionItem[] = input.items.map((item, index) => ({
+      conversationId: input.conversationId,
+      sessionId: input.sessionId,
+      sequence: firstSequence + index,
+      item,
+    }));
+
+    return transaction.insert(agentSessionItems).values(values).returning();
+  });
+}
+
+export async function popAgentSessionItem(input: {
+  conversationId: string;
+}): Promise<AgentSessionItem | undefined> {
+  const [lastItem] = await db
+    .select()
+    .from(agentSessionItems)
+    .where(eq(agentSessionItems.conversationId, input.conversationId))
+    .orderBy(desc(agentSessionItems.sequence))
+    .limit(1);
+
+  if (!lastItem) {
+    return undefined;
+  }
+
+  const [deletedItem] = await db
+    .delete(agentSessionItems)
+    .where(eq(agentSessionItems.id, lastItem.id))
+    .returning();
+
+  return deletedItem;
+}
+
+export async function clearAgentSessionItems(input: {
+  conversationId: string;
+}): Promise<void> {
+  await db
+    .delete(agentSessionItems)
+    .where(eq(agentSessionItems.conversationId, input.conversationId));
+}
+
+export async function countAgentSessionItems(input: {
+  conversationId: string;
+}): Promise<number> {
+  const items = await db
+    .select({ id: agentSessionItems.id })
+    .from(agentSessionItems)
+    .where(eq(agentSessionItems.conversationId, input.conversationId));
+
+  return items.length;
 }

@@ -59,3 +59,11 @@ export function decryptSecret(secret: EncryptedSecret): string {
 
   return plaintext.toString("utf8");
 }
+
+export function hashSecret(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+export function generateVerificationToken(): string {
+  return randomBytes(32).toString("base64url");
+}

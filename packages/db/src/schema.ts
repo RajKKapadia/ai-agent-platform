@@ -24,6 +24,24 @@ export const userRole = pgEnum("user_role", ["user", "admin"]);
 
 export const agentStatus = pgEnum("agent_status", ["active", "disabled"]);
 
+export const agentConnectionChannel = pgEnum("agent_connection_channel", [
+  "whatsapp",
+]);
+
+export const agentConnectionStatus = pgEnum("agent_connection_status", [
+  "pending",
+  "active",
+  "disabled",
+]);
+
+export const connectionEventStatus = pgEnum("connection_event_status", [
+  "queued",
+  "processing",
+  "completed",
+  "failed",
+  "ignored",
+]);
+
 export const knowledgeFileStatus = pgEnum("knowledge_file_status", [
   "in_progress",
   "completed",
@@ -182,6 +200,71 @@ export const agentMcpServers = pgTable(
   ],
 );
 
+export const agentConnections = pgTable(
+  "agent_connections",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    agentId: uuid("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    channel: agentConnectionChannel("channel").notNull(),
+    name: varchar("name", { length: 255 }).notNull(),
+    status: agentConnectionStatus("status").default("pending").notNull(),
+    externalId: varchar("external_id", { length: 255 }).notNull(),
+    appId: varchar("app_id", { length: 255 }).notNull(),
+    accessTokenCiphertext: text("access_token_ciphertext").notNull(),
+    accessTokenIv: varchar("access_token_iv", { length: 64 }).notNull(),
+    accessTokenAuthTag: varchar("access_token_auth_tag", {
+      length: 64,
+    }).notNull(),
+    accessTokenLastFour: varchar("access_token_last_four", {
+      length: 16,
+    }).notNull(),
+    appSecretCiphertext: text("app_secret_ciphertext").notNull(),
+    appSecretIv: varchar("app_secret_iv", { length: 64 }).notNull(),
+    appSecretAuthTag: varchar("app_secret_auth_tag", {
+      length: 64,
+    }).notNull(),
+    verificationTokenCiphertext: text(
+      "verification_token_ciphertext",
+    ).notNull(),
+    verificationTokenIv: varchar("verification_token_iv", {
+      length: 64,
+    }).notNull(),
+    verificationTokenAuthTag: varchar("verification_token_auth_tag", {
+      length: 64,
+    }).notNull(),
+    verificationTokenHash: varchar("verification_token_hash", {
+      length: 128,
+    }).notNull(),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("agent_connections_agent_id_idx").on(table.agentId),
+    index("agent_connections_user_id_idx").on(table.userId),
+    uniqueIndex("agent_connections_agent_channel_idx").on(
+      table.agentId,
+      table.channel,
+    ),
+    uniqueIndex("agent_connections_channel_external_id_idx").on(
+      table.channel,
+      table.externalId,
+    ),
+    uniqueIndex("agent_connections_verification_token_hash_idx").on(
+      table.verificationTokenHash,
+    ),
+  ],
+);
+
 export const conversations = pgTable(
   "conversations",
   {
@@ -228,12 +311,106 @@ export const messages = pgTable(
   ],
 );
 
+export const agentSessionItems = pgTable(
+  "agent_session_items",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    sessionId: varchar("session_id", { length: 255 }).notNull(),
+    sequence: integer("sequence").notNull(),
+    item: jsonb("item").$type<Record<string, unknown>>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("agent_session_items_conversation_id_idx").on(table.conversationId),
+    index("agent_session_items_session_id_idx").on(table.sessionId),
+    uniqueIndex("agent_session_items_conversation_sequence_idx").on(
+      table.conversationId,
+      table.sequence,
+    ),
+  ],
+);
+
+export const channelConversations = pgTable(
+  "channel_conversations",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    connectionId: uuid("connection_id")
+      .notNull()
+      .references(() => agentConnections.id, { onDelete: "cascade" }),
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    externalContactId: varchar("external_contact_id", {
+      length: 255,
+    }).notNull(),
+    displayName: varchar("display_name", { length: 255 }),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("channel_conversations_connection_id_idx").on(table.connectionId),
+    index("channel_conversations_conversation_id_idx").on(
+      table.conversationId,
+    ),
+    uniqueIndex("channel_conversations_contact_idx").on(
+      table.connectionId,
+      table.externalContactId,
+    ),
+  ],
+);
+
+export const connectionEvents = pgTable(
+  "connection_events",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    connectionId: uuid("connection_id")
+      .notNull()
+      .references(() => agentConnections.id, { onDelete: "cascade" }),
+    channelConversationId: uuid("channel_conversation_id").references(
+      () => channelConversations.id,
+      { onDelete: "set null" },
+    ),
+    externalEventId: varchar("external_event_id", { length: 255 }).notNull(),
+    eventType: varchar("event_type", { length: 128 }).notNull(),
+    status: connectionEventStatus("status").default("queued").notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>().default({}),
+    error: text("error"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("connection_events_connection_id_idx").on(table.connectionId),
+    index("connection_events_channel_conversation_id_idx").on(
+      table.channelConversationId,
+    ),
+    uniqueIndex("connection_events_external_event_idx").on(
+      table.connectionId,
+      table.externalEventId,
+    ),
+  ],
+);
+
 export const agentsRelations = relations(agents, ({ one, many }) => ({
   user: one(users, {
     fields: [agents.userId],
     references: [users.id],
   }),
   conversations: many(conversations),
+  connections: many(agentConnections),
   knowledgeFiles: many(agentKnowledgeFiles),
   tools: many(agentTools),
   mcpServers: many(agentMcpServers),
@@ -241,6 +418,7 @@ export const agentsRelations = relations(agents, ({ one, many }) => ({
 
 export const usersRelations = relations(users, ({ many }) => ({
   agents: many(agents),
+  connections: many(agentConnections),
   conversations: many(conversations),
 }));
 
@@ -271,6 +449,22 @@ export const agentMcpServersRelations = relations(
   }),
 );
 
+export const agentConnectionsRelations = relations(
+  agentConnections,
+  ({ one, many }) => ({
+    agent: one(agents, {
+      fields: [agentConnections.agentId],
+      references: [agents.id],
+    }),
+    user: one(users, {
+      fields: [agentConnections.userId],
+      references: [users.id],
+    }),
+    channelConversations: many(channelConversations),
+    events: many(connectionEvents),
+  }),
+);
+
 export const conversationsRelations = relations(
   conversations,
   ({ one, many }) => ({
@@ -283,6 +477,8 @@ export const conversationsRelations = relations(
       references: [users.id],
     }),
     messages: many(messages),
+    sessionItems: many(agentSessionItems),
+    channelConversations: many(channelConversations),
   }),
 );
 
@@ -293,6 +489,45 @@ export const messagesRelations = relations(messages, ({ one }) => ({
   }),
 }));
 
+export const agentSessionItemsRelations = relations(
+  agentSessionItems,
+  ({ one }) => ({
+    conversation: one(conversations, {
+      fields: [agentSessionItems.conversationId],
+      references: [conversations.id],
+    }),
+  }),
+);
+
+export const channelConversationsRelations = relations(
+  channelConversations,
+  ({ one, many }) => ({
+    connection: one(agentConnections, {
+      fields: [channelConversations.connectionId],
+      references: [agentConnections.id],
+    }),
+    conversation: one(conversations, {
+      fields: [channelConversations.conversationId],
+      references: [conversations.id],
+    }),
+    events: many(connectionEvents),
+  }),
+);
+
+export const connectionEventsRelations = relations(
+  connectionEvents,
+  ({ one }) => ({
+    connection: one(agentConnections, {
+      fields: [connectionEvents.connectionId],
+      references: [agentConnections.id],
+    }),
+    channelConversation: one(channelConversations, {
+      fields: [connectionEvents.channelConversationId],
+      references: [channelConversations.id],
+    }),
+  }),
+);
+
 export type Agent = typeof agents.$inferSelect;
 export type NewAgent = typeof agents.$inferInsert;
 export type AgentKnowledgeFile = typeof agentKnowledgeFiles.$inferSelect;
@@ -301,6 +536,15 @@ export type AgentTool = typeof agentTools.$inferSelect;
 export type NewAgentTool = typeof agentTools.$inferInsert;
 export type AgentMcpServer = typeof agentMcpServers.$inferSelect;
 export type NewAgentMcpServer = typeof agentMcpServers.$inferInsert;
+export type AgentConnection = typeof agentConnections.$inferSelect;
+export type NewAgentConnection = typeof agentConnections.$inferInsert;
+export type ChannelConversation = typeof channelConversations.$inferSelect;
+export type NewChannelConversation =
+  typeof channelConversations.$inferInsert;
+export type ConnectionEvent = typeof connectionEvents.$inferSelect;
+export type NewConnectionEvent = typeof connectionEvents.$inferInsert;
+export type AgentSessionItem = typeof agentSessionItems.$inferSelect;
+export type NewAgentSessionItem = typeof agentSessionItems.$inferInsert;
 export type UserRole = "user" | "admin";
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;

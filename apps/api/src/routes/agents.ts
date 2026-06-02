@@ -1,35 +1,46 @@
 import {
+  createAgentConnection,
   createAgentMcpServer,
   createAgentRecord,
   createAgentTool,
   createKnowledgeFile,
+  deleteAgentConnection,
   deleteAgentMcpServer,
   deleteAgentTool,
   deleteKnowledgeFileRecord,
+  getAgentConnectionByIdForAgent,
   getAgentByIdForUser,
   getKnowledgeFileByIdForAgent,
+  getWhatsAppConnectionByPhoneNumberId,
+  listAgentConnections,
   listAgentMcpServers,
   listAgentTools,
   listAgentsByUserId,
   listKnowledgeFiles,
   setAgentVectorStoreId,
+  updateAgentConnection,
   updateAgentMcpServer,
   updateAgentTool,
   type Agent,
+  type AgentConnection,
 } from "@repo/db";
+import { appConfig } from "@repo/config";
+import {
+  createAgentVectorStore,
+  deleteKnowledgeFile as deleteOpenAIKnowledgeFile,
+  decryptSecret,
+  encryptSecret,
+  generateGuardrailPrompt,
+  generateVerificationToken,
+  hashSecret,
+  uploadKnowledgeFile as uploadOpenAIKnowledgeFile,
+  validateOpenAIKey,
+} from "@repo/agents";
 import { Router, type Router as ExpressRouter } from "express";
 import multer from "multer";
 import { z } from "zod";
 import { requireAuthenticatedUser } from "../auth";
 import { HttpError, parseBody } from "../errors";
-import {
-  createAgentVectorStore,
-  deleteKnowledgeFile as deleteOpenAIKnowledgeFile,
-  generateGuardrailPrompt,
-  uploadKnowledgeFile as uploadOpenAIKnowledgeFile,
-  validateOpenAIKey,
-} from "../openai-service";
-import { decryptSecret, encryptSecret } from "../secret-crypto";
 
 const metadataSchema = z.record(z.string(), z.unknown());
 
@@ -96,6 +107,30 @@ const createMcpServerSchema = mcpServerBaseSchema.superRefine(
 
 const updateMcpServerSchema = mcpServerBaseSchema.partial();
 
+const createWhatsAppConnectionSchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(2, "Connection name must be at least 2 characters"),
+  phoneNumberId: z.string().trim().min(1, "Phone number id is required"),
+  accessToken: z.string().trim().min(1, "Access token is required"),
+  appId: z.string().trim().min(1, "App id is required"),
+  appSecret: z.string().trim().min(1, "App secret is required"),
+  metadata: metadataSchema.default({}),
+});
+
+const updateWhatsAppConnectionSchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(2, "Connection name must be at least 2 characters"),
+  phoneNumberId: z.string().trim().min(1, "Phone number id is required"),
+  appId: z.string().trim().min(1, "App id is required"),
+  accessToken: z.string().trim().optional(),
+  appSecret: z.string().trim().optional(),
+  metadata: metadataSchema.optional(),
+});
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
@@ -120,6 +155,33 @@ function toPublicAgent(agent: Agent) {
     metadata: agent.metadata,
     createdAt: agent.createdAt,
     updatedAt: agent.updatedAt,
+  };
+}
+
+function getWhatsAppWebhookUrl() {
+  return new URL("/webhooks/meta/whatsapp", appConfig.api.publicUrl).toString();
+}
+
+function toPublicConnection(connection: AgentConnection) {
+  return {
+    id: connection.id,
+    agentId: connection.agentId,
+    userId: connection.userId,
+    channel: connection.channel,
+    name: connection.name,
+    status: connection.status,
+    externalId: connection.externalId,
+    appId: connection.appId,
+    accessTokenLastFour: connection.accessTokenLastFour,
+    verificationToken: decryptSecret({
+      ciphertext: connection.verificationTokenCiphertext,
+      iv: connection.verificationTokenIv,
+      authTag: connection.verificationTokenAuthTag,
+    }),
+    webhookUrl: getWhatsAppWebhookUrl(),
+    metadata: connection.metadata,
+    createdAt: connection.createdAt,
+    updatedAt: connection.updatedAt,
   };
 }
 
@@ -260,10 +322,11 @@ agentsRouter.get("/:agentId", async (request, response, next) => {
   try {
     const { user } = await requireAuthenticatedUser(request);
     const agent = await requireAgent(getPathParam(request, "agentId"), user.id);
-    const [knowledgeFiles, tools, mcpServers] = await Promise.all([
+    const [knowledgeFiles, tools, mcpServers, connections] = await Promise.all([
       listKnowledgeFiles(agent.id),
       listAgentTools(agent.id),
       listAgentMcpServers(agent.id),
+      listAgentConnections(agent.id),
     ]);
 
     return response.status(200).json({
@@ -271,11 +334,186 @@ agentsRouter.get("/:agentId", async (request, response, next) => {
       knowledgeFiles,
       tools,
       mcpServers,
+      connections: connections.map(toPublicConnection),
     });
   } catch (error) {
     next(error);
   }
 });
+
+agentsRouter.get(
+  "/:agentId/connections",
+  async (request, response, next) => {
+    try {
+      const { user } = await requireAuthenticatedUser(request);
+      const agent = await requireAgent(
+        getPathParam(request, "agentId"),
+        user.id,
+      );
+      const connections = await listAgentConnections(agent.id);
+
+      return response.status(200).json({
+        connections: connections.map(toPublicConnection),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+agentsRouter.post(
+  "/:agentId/connections/whatsapp",
+  async (request, response, next) => {
+    try {
+      const { user } = await requireAuthenticatedUser(request);
+      const agent = await requireAgent(
+        getPathParam(request, "agentId"),
+        user.id,
+      );
+      const input = parseBody(createWhatsAppConnectionSchema, request.body);
+      const existingAgentConnection = (await listAgentConnections(agent.id)).find(
+        (connection) => connection.channel === "whatsapp",
+      );
+
+      if (existingAgentConnection) {
+        throw new HttpError(409, "Agent already has a WhatsApp connection");
+      }
+
+      const existingPhoneConnection =
+        await getWhatsAppConnectionByPhoneNumberId(input.phoneNumberId);
+
+      if (existingPhoneConnection) {
+        throw new HttpError(409, "Phone number id is already connected");
+      }
+
+      const verificationToken = generateVerificationToken();
+      const encryptedAccessToken = encryptSecret(input.accessToken);
+      const encryptedAppSecret = encryptSecret(input.appSecret);
+      const encryptedVerificationToken = encryptSecret(verificationToken);
+      const connection = await createAgentConnection({
+        agentId: agent.id,
+        userId: user.id,
+        channel: "whatsapp",
+        name: input.name,
+        externalId: input.phoneNumberId,
+        appId: input.appId,
+        accessTokenCiphertext: encryptedAccessToken.ciphertext,
+        accessTokenIv: encryptedAccessToken.iv,
+        accessTokenAuthTag: encryptedAccessToken.authTag,
+        accessTokenLastFour: input.accessToken.slice(-4),
+        appSecretCiphertext: encryptedAppSecret.ciphertext,
+        appSecretIv: encryptedAppSecret.iv,
+        appSecretAuthTag: encryptedAppSecret.authTag,
+        verificationTokenCiphertext: encryptedVerificationToken.ciphertext,
+        verificationTokenIv: encryptedVerificationToken.iv,
+        verificationTokenAuthTag: encryptedVerificationToken.authTag,
+        verificationTokenHash: hashSecret(verificationToken),
+        metadata: input.metadata,
+      });
+
+      return response.status(201).json({
+        connection: toPublicConnection(connection),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+agentsRouter.patch(
+  "/:agentId/connections/:connectionId",
+  async (request, response, next) => {
+    try {
+      const { user } = await requireAuthenticatedUser(request);
+      const agent = await requireAgent(
+        getPathParam(request, "agentId"),
+        user.id,
+      );
+      const connection = await getAgentConnectionByIdForAgent(
+        getPathParam(request, "connectionId"),
+        agent.id,
+      );
+
+      if (!connection) {
+        throw new HttpError(404, "Connection not found");
+      }
+
+      if (connection.channel !== "whatsapp") {
+        throw new HttpError(400, "Only WhatsApp connections can be edited");
+      }
+
+      const input = parseBody(updateWhatsAppConnectionSchema, request.body);
+      const phoneConnection = await getWhatsAppConnectionByPhoneNumberId(
+        input.phoneNumberId,
+      );
+
+      if (phoneConnection && phoneConnection.id !== connection.id) {
+        throw new HttpError(409, "Phone number id is already connected");
+      }
+
+      const encryptedAccessToken = input.accessToken
+        ? encryptSecret(input.accessToken)
+        : undefined;
+      const encryptedAppSecret = input.appSecret
+        ? encryptSecret(input.appSecret)
+        : undefined;
+      const updatedConnection = await updateAgentConnection(
+        connection.id,
+        agent.id,
+        {
+          name: input.name,
+          externalId: input.phoneNumberId,
+          appId: input.appId,
+          accessTokenCiphertext: encryptedAccessToken?.ciphertext,
+          accessTokenIv: encryptedAccessToken?.iv,
+          accessTokenAuthTag: encryptedAccessToken?.authTag,
+          accessTokenLastFour: input.accessToken?.slice(-4),
+          appSecretCiphertext: encryptedAppSecret?.ciphertext,
+          appSecretIv: encryptedAppSecret?.iv,
+          appSecretAuthTag: encryptedAppSecret?.authTag,
+          metadata: input.metadata,
+        },
+      );
+
+      if (!updatedConnection) {
+        throw new HttpError(404, "Connection not found");
+      }
+
+      return response.status(200).json({
+        connection: toPublicConnection(updatedConnection),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+agentsRouter.delete(
+  "/:agentId/connections/:connectionId",
+  async (request, response, next) => {
+    try {
+      const { user } = await requireAuthenticatedUser(request);
+      const agent = await requireAgent(
+        getPathParam(request, "agentId"),
+        user.id,
+      );
+      const connection = await getAgentConnectionByIdForAgent(
+        getPathParam(request, "connectionId"),
+        agent.id,
+      );
+
+      if (!connection) {
+        throw new HttpError(404, "Connection not found");
+      }
+
+      await deleteAgentConnection(connection.id, agent.id);
+
+      return response.status(200).json({ ok: true });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 agentsRouter.post(
   "/:agentId/knowledge",

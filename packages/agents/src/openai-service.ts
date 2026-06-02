@@ -10,6 +10,12 @@ export interface UploadedKnowledgeFile {
   status: "in_progress" | "completed" | "cancelled" | "failed";
 }
 
+export interface KnowledgeUploadFile {
+  buffer: Buffer;
+  originalname: string;
+  mimetype?: string;
+}
+
 function createOpenAIClient(apiKey: string): OpenAI {
   return new OpenAI({ apiKey });
 }
@@ -100,7 +106,7 @@ export async function createAgentVectorStore(input: {
 export async function uploadKnowledgeFile(input: {
   apiKey: string;
   vectorStoreId: string;
-  file: Express.Multer.File;
+  file: KnowledgeUploadFile;
 }): Promise<UploadedKnowledgeFile> {
   const client = createOpenAIClient(input.apiKey);
   const openaiFile = await client.files.create({

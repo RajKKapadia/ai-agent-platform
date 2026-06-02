@@ -3,7 +3,9 @@
 import {
   createMcpServerAction,
   createToolAction,
+  createWhatsAppConnectionAction,
   uploadKnowledgeFileAction,
+  updateWhatsAppConnectionAction,
   type AgentActionResult,
 } from "@/app/actions/agents";
 import { Alert } from "@/components/ui/alert";
@@ -13,7 +15,18 @@ import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
-import { FileText, Loader2, Plug, Upload, Wrench, X } from "lucide-react";
+import type { ApiAgentConnection } from "@/lib/api-types";
+import {
+  Check,
+  Copy,
+  FileText,
+  Loader2,
+  MessageCircle,
+  Plug,
+  Upload,
+  Wrench,
+  X,
+} from "lucide-react";
 import {
   useActionState,
   useRef,
@@ -23,6 +36,9 @@ import {
 } from "react";
 
 const initialState: AgentActionResult = {};
+const connectionInitialState: AgentActionResult<{
+  connection: ApiAgentConnection;
+}> = {};
 
 function formatBytes(bytes: number) {
   if (bytes < 1024) {
@@ -153,6 +169,260 @@ export function KnowledgeUploadForm({ agentId }: { agentId: string }) {
         )}
         Upload
       </Button>
+    </form>
+  );
+}
+
+export function CopyValue({ label, value }: { label: string; value: string }) {
+  const [copied, setCopied] = useState(false);
+
+  return (
+    <div className="space-y-2">
+      <Label>{label}</Label>
+      <div className="flex min-w-0 items-center gap-2 rounded-md border border-zinc-200 bg-white p-2">
+        <p className="min-w-0 flex-1 truncate text-sm text-zinc-700">
+          {value}
+        </p>
+        <Button
+          onClick={async () => {
+            await navigator.clipboard.writeText(value);
+            setCopied(true);
+            window.setTimeout(() => setCopied(false), 1500);
+          }}
+          size="sm"
+          type="button"
+          variant="outline"
+        >
+          {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+export function WhatsAppConnectionCreateForm({
+  agentId,
+}: {
+  agentId: string;
+}) {
+  const [state, formAction, isPending] = useActionState(
+    createWhatsAppConnectionAction.bind(null, agentId),
+    connectionInitialState,
+  );
+  const connection = state.data?.connection;
+
+  return (
+    <form action={formAction} className="space-y-4">
+      {state.error ? <Alert>{state.error}</Alert> : null}
+      {connection ? (
+        <div className="space-y-3 rounded-md border border-emerald-200 bg-emerald-50 p-4">
+          <p className="text-sm font-medium text-emerald-900">
+            WhatsApp connection created
+          </p>
+          <CopyValue label="Webhook URL" value={connection.webhookUrl} />
+          <CopyValue
+            label="Verification token"
+            value={connection.verificationToken}
+          />
+        </div>
+      ) : null}
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="space-y-2">
+          <Label htmlFor="whatsappConnectionName">Name</Label>
+          <Input
+            id="whatsappConnectionName"
+            name="name"
+            placeholder="Sales WhatsApp"
+            required
+          />
+          {state.fieldErrors?.name?.[0] ? (
+            <p className="text-sm text-red-600">{state.fieldErrors.name[0]}</p>
+          ) : null}
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="whatsappPhoneNumberId">Phone number id</Label>
+          <Input
+            id="whatsappPhoneNumberId"
+            name="phoneNumberId"
+            placeholder="1234567890"
+            required
+          />
+          {state.fieldErrors?.phoneNumberId?.[0] ? (
+            <p className="text-sm text-red-600">
+              {state.fieldErrors.phoneNumberId[0]}
+            </p>
+          ) : null}
+        </div>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="space-y-2">
+          <Label htmlFor="whatsappAppId">App id</Label>
+          <Input id="whatsappAppId" name="appId" required />
+          {state.fieldErrors?.appId?.[0] ? (
+            <p className="text-sm text-red-600">
+              {state.fieldErrors.appId[0]}
+            </p>
+          ) : null}
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="whatsappAccessToken">Access token</Label>
+          <Input
+            id="whatsappAccessToken"
+            name="accessToken"
+            required
+            type="password"
+          />
+          {state.fieldErrors?.accessToken?.[0] ? (
+            <p className="text-sm text-red-600">
+              {state.fieldErrors.accessToken[0]}
+            </p>
+          ) : null}
+        </div>
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor="whatsappAppSecret">App secret</Label>
+        <Input
+          id="whatsappAppSecret"
+          name="appSecret"
+          required
+          type="password"
+        />
+        {state.fieldErrors?.appSecret?.[0] ? (
+          <p className="text-sm text-red-600">
+            {state.fieldErrors.appSecret[0]}
+          </p>
+        ) : null}
+      </div>
+      <Button disabled={isPending} type="submit">
+        {isPending ? (
+          <Loader2 className="size-4 animate-spin" />
+        ) : (
+          <MessageCircle className="size-4" />
+        )}
+        Connect WhatsApp
+      </Button>
+    </form>
+  );
+}
+
+export function WhatsAppConnectionEditForm({
+  agentId,
+  connection,
+  onCancel,
+}: {
+  agentId: string;
+  connection: ApiAgentConnection;
+  onCancel: () => void;
+}) {
+  const [state, formAction, isPending] = useActionState(
+    updateWhatsAppConnectionAction.bind(null, agentId, connection.id),
+    connectionInitialState,
+  );
+
+  return (
+    <form action={formAction} className="space-y-4 rounded-md border border-zinc-200 bg-zinc-50 p-4">
+      {state.error ? <Alert>{state.error}</Alert> : null}
+      {state.success ? (
+        <div className="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+          Connection updated
+        </div>
+      ) : null}
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="space-y-2">
+          <Label htmlFor={`whatsappConnectionName-${connection.id}`}>
+            Name
+          </Label>
+          <Input
+            defaultValue={connection.name}
+            id={`whatsappConnectionName-${connection.id}`}
+            name="name"
+            required
+          />
+          {state.fieldErrors?.name?.[0] ? (
+            <p className="text-sm text-red-600">{state.fieldErrors.name[0]}</p>
+          ) : null}
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor={`whatsappPhoneNumberId-${connection.id}`}>
+            Phone number id
+          </Label>
+          <Input
+            defaultValue={connection.externalId}
+            id={`whatsappPhoneNumberId-${connection.id}`}
+            name="phoneNumberId"
+            required
+          />
+          {state.fieldErrors?.phoneNumberId?.[0] ? (
+            <p className="text-sm text-red-600">
+              {state.fieldErrors.phoneNumberId[0]}
+            </p>
+          ) : null}
+        </div>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="space-y-2">
+          <Label htmlFor={`whatsappAppId-${connection.id}`}>App id</Label>
+          <Input
+            defaultValue={connection.appId}
+            id={`whatsappAppId-${connection.id}`}
+            name="appId"
+            required
+          />
+          {state.fieldErrors?.appId?.[0] ? (
+            <p className="text-sm text-red-600">
+              {state.fieldErrors.appId[0]}
+            </p>
+          ) : null}
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor={`whatsappAccessToken-${connection.id}`}>
+            Access token
+          </Label>
+          <Input
+            id={`whatsappAccessToken-${connection.id}`}
+            name="accessToken"
+            placeholder={`Leave blank to keep ****${connection.accessTokenLastFour}`}
+            type="password"
+          />
+          {state.fieldErrors?.accessToken?.[0] ? (
+            <p className="text-sm text-red-600">
+              {state.fieldErrors.accessToken[0]}
+            </p>
+          ) : null}
+        </div>
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor={`whatsappAppSecret-${connection.id}`}>App secret</Label>
+        <Input
+          id={`whatsappAppSecret-${connection.id}`}
+          name="appSecret"
+          placeholder="Leave blank to keep current app secret"
+          type="password"
+        />
+        {state.fieldErrors?.appSecret?.[0] ? (
+          <p className="text-sm text-red-600">
+            {state.fieldErrors.appSecret[0]}
+          </p>
+        ) : null}
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Button disabled={isPending} type="submit">
+          {isPending ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : (
+            <MessageCircle className="size-4" />
+          )}
+          Save connection
+        </Button>
+        <Button
+          disabled={isPending}
+          onClick={onCancel}
+          type="button"
+          variant="outline"
+        >
+          Cancel
+        </Button>
+      </div>
     </form>
   );
 }
