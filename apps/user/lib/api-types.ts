@@ -95,6 +95,39 @@ export interface ApiAgentConnection {
   updatedAt: string;
 }
 
+export interface ApiConversationMessage {
+  id: string;
+  conversationId: string;
+  role: "system" | "user" | "assistant" | "tool";
+  content: string;
+  metadata: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+export interface ApiConversationSummary {
+  id: string;
+  agentId: string;
+  userId: string;
+  title: string | null;
+  channel: string | null;
+  connectionId: string | null;
+  connectionName: string | null;
+  externalContactId: string | null;
+  displayName: string | null;
+  lastMessage: ApiConversationMessage | null;
+  lastMessageAt: string;
+  messageCount: number;
+  metadata: Record<string, unknown> | null;
+  channelMetadata: Record<string, unknown> | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ApiConversationDetails {
+  conversation: ApiConversationSummary;
+  messages: ApiConversationMessage[];
+}
+
 export interface AgentDetails {
   agent: ApiAgent;
   knowledgeFiles: ApiKnowledgeFile[];
@@ -108,6 +141,15 @@ export interface CreateAgentInput {
   apiKey: string;
   model: string;
   instructions: string;
+  guardrailEnabled: boolean;
+  guardrailPrompt?: string;
+}
+
+export interface UpdateAgentConfigurationInput {
+  name: string;
+  model: string;
+  instructions: string;
+  status: "active" | "disabled";
   guardrailEnabled: boolean;
   guardrailPrompt?: string;
 }

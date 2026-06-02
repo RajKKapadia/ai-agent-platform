@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/card";
 import { listAgents } from "@/lib/api";
 import { getCurrentUser, getSessionId } from "@/lib/session";
-import { Bot, LogOut, Plus, ShieldCheck } from "lucide-react";
+import { Bot, LogOut, MessageSquare, Plus, ShieldCheck } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
@@ -53,33 +53,50 @@ export default async function AgentsPage() {
         {agents.length > 0 ? (
           <div className="grid gap-4 md:grid-cols-2">
             {agents.map((agent) => (
-              <Link href={`/agents/${agent.id}`} key={agent.id}>
-                <Card className="h-full transition-colors hover:border-zinc-300">
-                  <CardHeader>
+              <Card className="h-full" key={agent.id}>
+                <CardHeader>
+                  <Link href={`/agents/${agent.id}`}>
                     <CardTitle className="flex items-center gap-2 text-lg">
                       <Bot className="size-5 text-zinc-700" />
                       {agent.name}
                     </CardTitle>
-                    <CardDescription>{agent.model}</CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    <p className="line-clamp-3 text-sm text-zinc-600">
-                      {agent.instructions}
-                    </p>
-                    <div className="flex flex-wrap gap-2 text-xs text-zinc-600">
-                      <span className="rounded-md border border-zinc-200 px-2 py-1">
-                        Key ****{agent.openaiApiKeyLastFour}
+                  </Link>
+                  <CardDescription>{agent.model}</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <p className="line-clamp-3 text-sm text-zinc-600">
+                    {agent.instructions}
+                  </p>
+                  <div className="flex flex-wrap gap-2 text-xs text-zinc-600">
+                    <span className="rounded-md border border-zinc-200 px-2 py-1">
+                      Key ****{agent.openaiApiKeyLastFour}
+                    </span>
+                    {agent.guardrailEnabled ? (
+                      <span className="inline-flex items-center gap-1 rounded-md border border-zinc-200 px-2 py-1">
+                        <ShieldCheck className="size-3" />
+                        Guardrail
                       </span>
-                      {agent.guardrailEnabled ? (
-                        <span className="inline-flex items-center gap-1 rounded-md border border-zinc-200 px-2 py-1">
-                          <ShieldCheck className="size-3" />
-                          Guardrail
-                        </span>
-                      ) : null}
-                    </div>
-                  </CardContent>
-                </Card>
-              </Link>
+                    ) : null}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <ButtonLink
+                      href={`/agents/${agent.id}`}
+                      size="sm"
+                      variant="outline"
+                    >
+                      <Bot className="size-4" />
+                      Configure
+                    </ButtonLink>
+                    <ButtonLink
+                      href={`/agents/${agent.id}?tab=conversations`}
+                      size="sm"
+                    >
+                      <MessageSquare className="size-4" />
+                      Conversations
+                    </ButtonLink>
+                  </div>
+                </CardContent>
+              </Card>
             ))}
           </div>
         ) : (

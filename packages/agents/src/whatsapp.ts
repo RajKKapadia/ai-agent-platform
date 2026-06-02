@@ -11,6 +11,21 @@ export interface WhatsAppInboundMessagePayload {
   raw: Record<string, unknown>;
 }
 
+export interface WhatsAppSendTextMessageResult {
+  messageId?: string;
+  raw: unknown;
+}
+
+export class WhatsAppSendMessageError extends Error {
+  constructor(
+    public readonly statusCode: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "WhatsAppSendMessageError";
+  }
+}
+
 interface WhatsAppMessage {
   id?: unknown;
   from?: unknown;
@@ -169,7 +184,7 @@ export async function sendWhatsAppTextMessage(input: {
   accessToken: string;
   to: string;
   text: string;
-}): Promise<void> {
+}): Promise<WhatsAppSendTextMessageResult> {
   const response = await fetch(
     `${input.graphApiBaseUrl.replace(/\/$/, "")}/${input.phoneNumberId}/messages`,
     {
@@ -191,8 +206,19 @@ export async function sendWhatsAppTextMessage(input: {
 
   if (!response.ok) {
     const body = (await response.text().catch(() => "")).slice(0, 500);
-    throw new Error(
+    throw new WhatsAppSendMessageError(
+      response.status,
       `Failed to send WhatsApp message: ${response.status} ${body}`,
     );
   }
+
+  const raw = (await response.json().catch(() => null)) as unknown;
+  const messageId = isRecord(raw) && Array.isArray(raw.messages)
+    ? toString((raw.messages[0] as { id?: unknown } | undefined)?.id)
+    : undefined;
+
+  return {
+    messageId,
+    raw,
+  };
 }

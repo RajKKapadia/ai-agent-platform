@@ -4,6 +4,8 @@ import type {
   AgentDetails,
   ApiAgentConnection,
   ApiAgent,
+  ApiConversationDetails,
+  ApiConversationSummary,
   ApiAgentTool,
   ApiKnowledgeFile,
   ApiMcpServer,
@@ -15,6 +17,7 @@ import type {
   CreateToolInput,
   LoginInput,
   RegisterInput,
+  UpdateAgentConfigurationInput,
   UpdateWhatsAppConnectionInput,
 } from "@/lib/api-types";
 import { getRuntimeApiConfig } from "@repo/config/runtime";
@@ -23,6 +26,8 @@ export type {
   AgentDetails,
   ApiAgentConnection,
   ApiAgent,
+  ApiConversationDetails,
+  ApiConversationSummary,
   ApiAgentTool,
   ApiKnowledgeFile,
   ApiMcpServer,
@@ -34,6 +39,7 @@ export type {
   CreateToolInput,
   LoginInput,
   RegisterInput,
+  UpdateAgentConfigurationInput,
   UpdateWhatsAppConnectionInput,
 } from "@/lib/api-types";
 
@@ -71,6 +77,10 @@ interface McpServerResponse {
 
 interface ConnectionResponse {
   connection: ApiAgentConnection;
+}
+
+interface AgentConversationsResponse {
+  conversations: ApiConversationSummary[];
 }
 
 export class ApiError extends Error {
@@ -202,6 +212,27 @@ export async function generateAgentGuardrail(input: {
   return response.guardrailPrompt;
 }
 
+export async function generateStoredAgentGuardrail(input: {
+  sessionId: string;
+  agentId: string;
+  model: string;
+  agentPrompt: string;
+}): Promise<string> {
+  const response = await requestApi<GuardrailResponse>(
+    `/agents/${input.agentId}/generate-guardrail`,
+    {
+      method: "POST",
+      headers: authHeaders(input.sessionId),
+      body: JSON.stringify({
+        model: input.model,
+        agentPrompt: input.agentPrompt,
+      }),
+    },
+  );
+
+  return response.guardrailPrompt;
+}
+
 export async function listAgents(sessionId: string): Promise<ApiAgent[]> {
   const response = await requestApi<AgentsResponse>("/agents", {
     method: "GET",
@@ -224,6 +255,30 @@ export async function createAgent(
   return response.agent;
 }
 
+export async function updateAgentConfiguration(
+  sessionId: string,
+  agentId: string,
+  input: UpdateAgentConfigurationInput,
+): Promise<ApiAgent> {
+  const response = await requestApi<AgentResponse>(`/agents/${agentId}`, {
+    method: "PATCH",
+    headers: authHeaders(sessionId),
+    body: JSON.stringify(input),
+  });
+
+  return response.agent;
+}
+
+export async function deleteAgent(
+  sessionId: string,
+  agentId: string,
+): Promise<void> {
+  await requestApi<{ ok: true }>(`/agents/${agentId}`, {
+    method: "DELETE",
+    headers: authHeaders(sessionId),
+  });
+}
+
 export async function getAgentDetails(
   sessionId: string,
   agentId: string,
@@ -232,6 +287,60 @@ export async function getAgentDetails(
     method: "GET",
     headers: authHeaders(sessionId),
   });
+}
+
+export async function listAgentConversations(
+  sessionId: string,
+  agentId: string,
+  input: {
+    channel?: string;
+    connectionId?: string;
+    cursor?: string;
+    limit?: number;
+  } = {},
+): Promise<ApiConversationSummary[]> {
+  const params = new URLSearchParams();
+
+  if (input.channel) {
+    params.set("channel", input.channel);
+  }
+
+  if (input.connectionId) {
+    params.set("connectionId", input.connectionId);
+  }
+
+  if (input.cursor) {
+    params.set("cursor", input.cursor);
+  }
+
+  if (input.limit) {
+    params.set("limit", String(input.limit));
+  }
+
+  const query = params.toString();
+  const response = await requestApi<AgentConversationsResponse>(
+    `/agents/${agentId}/conversations${query ? `?${query}` : ""}`,
+    {
+      method: "GET",
+      headers: authHeaders(sessionId),
+    },
+  );
+
+  return response.conversations;
+}
+
+export async function getAgentConversationDetails(
+  sessionId: string,
+  agentId: string,
+  conversationId: string,
+): Promise<ApiConversationDetails> {
+  return requestApi<ApiConversationDetails>(
+    `/agents/${agentId}/conversations/${conversationId}`,
+    {
+      method: "GET",
+      headers: authHeaders(sessionId),
+    },
+  );
 }
 
 export async function uploadAgentKnowledgeFile(

@@ -67,21 +67,43 @@ export default async function DashboardPage() {
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
               {agents.slice(0, 4).map((agent) => (
-                <Link href={`/agents/${agent.id}`} key={agent.id}>
-                  <div className="h-full rounded-md border border-zinc-200 p-4 transition-colors hover:border-zinc-300">
+                <div
+                  className="h-full rounded-md border border-zinc-200 p-4"
+                  key={agent.id}
+                >
+                  <Link href={`/agents/${agent.id}`}>
                     <Bot className="mb-3 size-5 text-zinc-700" />
                     <p className="font-medium text-zinc-950">{agent.name}</p>
                     <p className="mt-1 text-sm text-zinc-500">{agent.model}</p>
+                  </Link>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <ButtonLink
+                      href={`/agents/${agent.id}`}
+                      size="sm"
+                      variant="outline"
+                    >
+                      <Bot className="size-4" />
+                      Configure
+                    </ButtonLink>
+                    <ButtonLink
+                      href={`/agents/${agent.id}?tab=conversations`}
+                      size="sm"
+                    >
+                      <MessageSquare className="size-4" />
+                      Conversations
+                    </ButtonLink>
                   </div>
-                </Link>
+                </div>
               ))}
-              <div className="rounded-md border border-zinc-200 p-4">
+              <Link href="/agents">
+                <div className="rounded-md border border-zinc-200 p-4 transition-colors hover:border-zinc-300">
                 <MessageSquare className="mb-3 size-5 text-zinc-700" />
                 <p className="font-medium text-zinc-950">Conversations</p>
                 <p className="mt-1 text-sm text-zinc-500">
-                  Conversation history stays here.
+                  Open an agent to view channel conversations.
                 </p>
-              </div>
+                </div>
+              </Link>
             </div>
           </CardContent>
         </Card>

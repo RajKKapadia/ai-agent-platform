@@ -1,4 +1,5 @@
 export * from "./context";
+export * from "./conversation-events";
 export * from "./crypto";
 export * from "./openai-service";
 export * from "./queue";

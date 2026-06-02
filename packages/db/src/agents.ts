@@ -1,4 +1,4 @@
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, count, desc, eq, lt, sql, type SQL } from "drizzle-orm";
 import { db } from "./client";
 import {
   agentConnections,
@@ -14,7 +14,9 @@ import {
   type AgentConnection,
   type AgentSessionItem,
   type ChannelConversation,
+  type Conversation,
   type ConnectionEvent,
+  type Message,
   type NewAgent,
   type NewAgentConnection,
   type NewAgentSessionItem,
@@ -37,6 +39,16 @@ export interface CreateAgentRecordInput {
   openaiApiKeyAuthTag: string;
   openaiApiKeyLastFour: string;
   openaiVectorStoreId?: string | null;
+  guardrailEnabled?: boolean;
+  guardrailPrompt?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+export interface UpdateAgentConfigurationInput {
+  name?: string;
+  instructions?: string;
+  model?: string;
+  status?: NewAgent["status"];
   guardrailEnabled?: boolean;
   guardrailPrompt?: string | null;
   metadata?: Record<string, unknown>;
@@ -149,6 +161,28 @@ export interface ConnectionEventStatusInput {
   error?: string | null;
 }
 
+export interface ListAgentConversationsInput {
+  agentId: string;
+  userId: string;
+  limit?: number;
+  cursor?: Date;
+  channel?: NewAgentConnection["channel"];
+  connectionId?: string;
+}
+
+export interface AgentConversationSummary {
+  conversation: Conversation;
+  channelConversation: ChannelConversation | null;
+  connection: AgentConnection | null;
+  lastMessage: Message | null;
+  lastMessageAt: Date;
+  messageCount: number;
+}
+
+export interface AgentConversationDetails extends AgentConversationSummary {
+  messages: Message[];
+}
+
 function compactObject<T extends Record<string, unknown>>(input: T): T {
   return Object.fromEntries(
     Object.entries(input).filter(([, value]) => value !== undefined),
@@ -204,6 +238,29 @@ export async function getAgentByIdForUser(id: string, userId: string) {
     .select()
     .from(agents)
     .where(and(eq(agents.id, id), eq(agents.userId, userId)));
+
+  return agent ?? null;
+}
+
+export async function updateAgentConfiguration(
+  id: string,
+  userId: string,
+  input: UpdateAgentConfigurationInput,
+) {
+  const [agent] = await db
+    .update(agents)
+    .set(compactObject({ ...input, updatedAt: new Date() }))
+    .where(and(eq(agents.id, id), eq(agents.userId, userId)))
+    .returning();
+
+  return agent ?? null;
+}
+
+export async function deleteAgentByIdForUser(id: string, userId: string) {
+  const [agent] = await db
+    .delete(agents)
+    .where(and(eq(agents.id, id), eq(agents.userId, userId)))
+    .returning();
 
   return agent ?? null;
 }
@@ -628,13 +685,201 @@ export async function createConversationRecord(input: NewConversation) {
 }
 
 export async function createMessageRecord(input: NewMessage) {
+  const { message } = await createMessageRecordIfNew(input);
+
+  return message;
+}
+
+export async function createMessageRecordIfNew(
+  input: NewMessage,
+): Promise<{ message: Message; created: boolean }> {
+  if (input.dedupeKey) {
+    const [createdMessage] = await db
+      .insert(messages)
+      .values(input)
+      .onConflictDoNothing({
+        target: [messages.conversationId, messages.dedupeKey],
+      })
+      .returning();
+
+    if (createdMessage) {
+      return { message: createdMessage, created: true };
+    }
+
+    const [existingMessage] = await db
+      .select()
+      .from(messages)
+      .where(
+        and(
+          eq(messages.conversationId, input.conversationId),
+          eq(messages.dedupeKey, input.dedupeKey),
+        ),
+      );
+
+    if (!existingMessage) {
+      throw new Error("Failed to load existing message");
+    }
+
+    return { message: existingMessage, created: false };
+  }
+
   const [message] = await db.insert(messages).values(input).returning();
 
   if (!message) {
     throw new Error("Failed to create message");
   }
 
-  return message;
+  return { message, created: true };
+}
+
+export async function getMessageByDedupeKey(
+  conversationId: string,
+  dedupeKey: string,
+): Promise<Message | null> {
+  const [message] = await db
+    .select()
+    .from(messages)
+    .where(
+      and(
+        eq(messages.conversationId, conversationId),
+        eq(messages.dedupeKey, dedupeKey),
+      ),
+    );
+
+  return message ?? null;
+}
+
+export async function listAgentConversations(
+  input: ListAgentConversationsInput,
+): Promise<AgentConversationSummary[]> {
+  const limit = Math.min(Math.max(input.limit ?? 25, 1), 100);
+  const messageStats = db
+    .select({
+      conversationId: messages.conversationId,
+      lastMessageAt: sql<Date>`max(${messages.createdAt})`.as(
+        "last_message_at",
+      ),
+      messageCount: count(messages.id).as("message_count"),
+    })
+    .from(messages)
+    .groupBy(messages.conversationId)
+    .as("message_stats");
+  const lastActivityAt = sql<Date>`coalesce(${messageStats.lastMessageAt}, ${conversations.createdAt})`;
+  const conditions: SQL[] = [
+    eq(conversations.agentId, input.agentId),
+    eq(conversations.userId, input.userId),
+  ];
+
+  if (input.cursor) {
+    conditions.push(lt(lastActivityAt, input.cursor));
+  }
+
+  if (input.channel) {
+    conditions.push(eq(agentConnections.channel, input.channel));
+  }
+
+  if (input.connectionId) {
+    conditions.push(eq(channelConversations.connectionId, input.connectionId));
+  }
+
+  const rows = await db
+    .select({
+      conversation: conversations,
+      channelConversation: channelConversations,
+      connection: agentConnections,
+      lastMessageAt: messageStats.lastMessageAt,
+      messageCount: messageStats.messageCount,
+    })
+    .from(conversations)
+    .leftJoin(
+      channelConversations,
+      eq(channelConversations.conversationId, conversations.id),
+    )
+    .leftJoin(
+      agentConnections,
+      eq(agentConnections.id, channelConversations.connectionId),
+    )
+    .leftJoin(
+      messageStats,
+      eq(messageStats.conversationId, conversations.id),
+    )
+    .where(and(...conditions))
+    .orderBy(desc(lastActivityAt), desc(conversations.createdAt))
+    .limit(limit);
+
+  return Promise.all(
+    rows.map(async (row) => {
+      const [lastMessage] = await db
+        .select()
+        .from(messages)
+        .where(eq(messages.conversationId, row.conversation.id))
+        .orderBy(desc(messages.createdAt))
+        .limit(1);
+
+      return {
+        conversation: row.conversation,
+        channelConversation: row.channelConversation,
+        connection: row.connection,
+        lastMessage: lastMessage ?? null,
+        lastMessageAt:
+          row.lastMessageAt ?? lastMessage?.createdAt ?? row.conversation.createdAt,
+        messageCount: Number(row.messageCount ?? 0),
+      };
+    }),
+  );
+}
+
+export async function getAgentConversationDetails(input: {
+  agentId: string;
+  userId: string;
+  conversationId: string;
+}): Promise<AgentConversationDetails | null> {
+  const [row] = await db
+    .select({
+      conversation: conversations,
+      channelConversation: channelConversations,
+      connection: agentConnections,
+    })
+    .from(conversations)
+    .leftJoin(
+      channelConversations,
+      eq(channelConversations.conversationId, conversations.id),
+    )
+    .leftJoin(
+      agentConnections,
+      eq(agentConnections.id, channelConversations.connectionId),
+    )
+    .where(
+      and(
+        eq(conversations.id, input.conversationId),
+        eq(conversations.agentId, input.agentId),
+        eq(conversations.userId, input.userId),
+      ),
+    );
+
+  if (!row) {
+    return null;
+  }
+
+  const conversationMessages = await db
+    .select()
+    .from(messages)
+    .where(eq(messages.conversationId, row.conversation.id))
+    .orderBy(asc(messages.createdAt));
+  const lastMessage =
+    conversationMessages.length > 0
+      ? (conversationMessages[conversationMessages.length - 1] ?? null)
+      : null;
+
+  return {
+    conversation: row.conversation,
+    channelConversation: row.channelConversation,
+    connection: row.connection,
+    lastMessage,
+    lastMessageAt: lastMessage?.createdAt ?? row.conversation.createdAt,
+    messageCount: conversationMessages.length,
+    messages: conversationMessages,
+  };
 }
 
 export async function getChannelConversation(

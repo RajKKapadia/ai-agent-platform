@@ -297,6 +297,11 @@ export const messages = pgTable(
     conversationId: uuid("conversation_id")
       .notNull()
       .references(() => conversations.id, { onDelete: "cascade" }),
+    connectionEventId: uuid("connection_event_id").references(
+      () => connectionEvents.id,
+      { onDelete: "set null" },
+    ),
+    dedupeKey: varchar("dedupe_key", { length: 255 }),
     role: messageRole("role").notNull(),
     content: text("content").notNull(),
     metadata: jsonb("metadata").$type<Record<string, unknown>>().default({}),
@@ -307,6 +312,11 @@ export const messages = pgTable(
   (table) => [
     index("messages_conversation_id_idx").on(
       table.conversationId,
+    ),
+    index("messages_connection_event_id_idx").on(table.connectionEventId),
+    uniqueIndex("messages_conversation_dedupe_key_idx").on(
+      table.conversationId,
+      table.dedupeKey,
     ),
   ],
 );
@@ -486,6 +496,10 @@ export const messagesRelations = relations(messages, ({ one }) => ({
   conversation: one(conversations, {
     fields: [messages.conversationId],
     references: [conversations.id],
+  }),
+  connectionEvent: one(connectionEvents, {
+    fields: [messages.connectionEventId],
+    references: [connectionEvents.id],
   }),
 }));
 

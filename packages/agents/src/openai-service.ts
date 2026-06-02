@@ -103,6 +103,15 @@ export async function createAgentVectorStore(input: {
   });
 }
 
+export async function deleteAgentVectorStore(input: {
+  apiKey: string;
+  vectorStoreId: string;
+}): Promise<void> {
+  const client = createOpenAIClient(input.apiKey);
+
+  await client.vectorStores.delete(input.vectorStoreId).catch(() => undefined);
+}
+
 export async function uploadKnowledgeFile(input: {
   apiKey: string;
   vectorStoreId: string;
@@ -170,11 +179,23 @@ export async function deleteKnowledgeFile(input: {
   openaiVectorStoreFileId: string;
 }): Promise<void> {
   const client = createOpenAIClient(input.apiKey);
+  const errors: unknown[] = [];
 
   await client.vectorStores.files
     .delete(input.openaiVectorStoreFileId, {
       vector_store_id: input.vectorStoreId,
     })
-    .catch(() => undefined);
-  await client.files.delete(input.openaiFileId).catch(() => undefined);
+    .catch((error) => {
+      errors.push(error);
+    });
+  await client.files.delete(input.openaiFileId).catch((error) => {
+    errors.push(error);
+  });
+
+  if (errors.length > 0) {
+    throw new AggregateError(
+      errors,
+      "Failed to delete knowledge file from OpenAI",
+    );
+  }
 }

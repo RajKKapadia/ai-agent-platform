@@ -6,16 +6,23 @@ import {
   createAgentMcpServer,
   createWhatsAppConnection,
   createAgentTool,
+  deleteAgent,
   deleteAgentConnection,
   deleteAgentKnowledgeFile,
   deleteAgentMcpServer,
   deleteAgentTool,
   generateAgentGuardrail,
+  generateStoredAgentGuardrail,
   uploadAgentKnowledgeFile,
+  updateAgentConfiguration,
   updateWhatsAppConnection,
   validateOpenAIKey,
 } from "@/lib/api";
-import type { ApiAgentConnection, CreateAgentInput } from "@/lib/api-types";
+import type {
+  ApiAgentConnection,
+  CreateAgentInput,
+  UpdateAgentConfigurationInput,
+} from "@/lib/api-types";
 import { getSessionId } from "@/lib/session";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
@@ -35,6 +42,20 @@ const createAgentSchema = z.object({
   instructions: z.string().trim().min(10, "Agent prompt is too short"),
   guardrailEnabled: z.boolean(),
   guardrailPrompt: z.string().trim().optional(),
+});
+
+const updateAgentConfigurationSchema = z.object({
+  name: z.string().trim().min(2, "Agent name must be at least 2 characters"),
+  model: z.string().trim().min(1, "Model is required"),
+  instructions: z.string().trim().min(10, "Agent prompt is too short"),
+  status: z.enum(["active", "disabled"]),
+  guardrailEnabled: z.boolean(),
+  guardrailPrompt: z.string().trim().optional(),
+});
+
+const generateStoredAgentGuardrailSchema = z.object({
+  model: z.string().trim().min(1, "Model is required"),
+  agentPrompt: z.string().trim().min(10, "Agent prompt is too short"),
 });
 
 const createToolSchema = z.object({
@@ -158,6 +179,35 @@ export async function generateGuardrailAction(input: {
   }
 }
 
+export async function generateStoredAgentGuardrailAction(
+  agentId: string,
+  input: {
+    model: string;
+    agentPrompt: string;
+  },
+): Promise<AgentActionResult<{ guardrailPrompt: string }>> {
+  const parsed = generateStoredAgentGuardrailSchema.safeParse(input);
+
+  if (!parsed.success) {
+    return {
+      fieldErrors: parsed.error.flatten().fieldErrors,
+    };
+  }
+
+  try {
+    const sessionId = await requireSessionId();
+    const guardrailPrompt = await generateStoredAgentGuardrail({
+      sessionId,
+      agentId,
+      ...parsed.data,
+    });
+
+    return { data: { guardrailPrompt } };
+  } catch (error) {
+    return actionError(error);
+  }
+}
+
 export async function createAgentAction(
   input: CreateAgentInput,
 ): Promise<AgentActionResult<{ agentId: string }>> {
@@ -182,6 +232,32 @@ export async function createAgentAction(
   }
 }
 
+export async function updateAgentConfigurationAction(
+  agentId: string,
+  input: UpdateAgentConfigurationInput,
+): Promise<AgentActionResult> {
+  const parsed = updateAgentConfigurationSchema.safeParse(input);
+
+  if (!parsed.success) {
+    return {
+      fieldErrors: parsed.error.flatten().fieldErrors,
+    };
+  }
+
+  try {
+    const sessionId = await requireSessionId();
+    await updateAgentConfiguration(sessionId, agentId, parsed.data);
+
+    revalidatePath("/dashboard");
+    revalidatePath("/agents");
+    revalidatePath(`/agents/${agentId}`);
+
+    return { success: true };
+  } catch (error) {
+    return actionError(error);
+  }
+}
+
 export async function uploadKnowledgeFileAction(
   agentId: string,
   _previousState: AgentActionResult,
@@ -201,10 +277,33 @@ export async function uploadKnowledgeFileAction(
 export async function deleteKnowledgeFileAction(
   agentId: string,
   fileId: string,
-) {
-  const sessionId = await requireSessionId();
-  await deleteAgentKnowledgeFile(sessionId, agentId, fileId);
-  revalidatePath(`/agents/${agentId}`);
+): Promise<AgentActionResult> {
+  try {
+    const sessionId = await requireSessionId();
+    await deleteAgentKnowledgeFile(sessionId, agentId, fileId);
+    revalidatePath(`/agents/${agentId}`);
+
+    return { success: true };
+  } catch (error) {
+    return actionError(error);
+  }
+}
+
+export async function deleteAgentAction(
+  agentId: string,
+): Promise<AgentActionResult> {
+  try {
+    const sessionId = await requireSessionId();
+    await deleteAgent(sessionId, agentId);
+
+    revalidatePath("/dashboard");
+    revalidatePath("/agents");
+    revalidatePath(`/agents/${agentId}`);
+
+    return { success: true };
+  } catch (error) {
+    return actionError(error);
+  }
 }
 
 export async function createWhatsAppConnectionAction(

@@ -77,8 +77,18 @@ whatsAppWebhookRouter.post("/", async (request, response, next) => {
         getWhatsAppConnectionByPhoneNumberId(phoneNumberId),
       ),
     );
+    const connectionsByPhoneNumberId = new Map<
+      string,
+      NonNullable<(typeof connections)[number]>
+    >();
 
-    for (const connection of connections) {
+    for (const [index, connection] of connections.entries()) {
+      const phoneNumberId = phoneNumberIds[index];
+
+      if (!phoneNumberId) {
+        throw new HttpError(400, "Missing phone number id");
+      }
+
       if (!connection || connection.channel !== "whatsapp") {
         throw new HttpError(404, "WhatsApp connection not found");
       }
@@ -97,36 +107,40 @@ whatsAppWebhookRouter.post("/", async (request, response, next) => {
       if (!isValidSignature) {
         throw new HttpError(401, "Invalid webhook signature");
       }
+
+      connectionsByPhoneNumberId.set(phoneNumberId, connection);
     }
 
     const messages = parseWhatsAppInboundMessages(request.body);
 
-    for (const message of messages) {
-      const connection = await getWhatsAppConnectionByPhoneNumberId(
-        message.phoneNumberId,
-      );
+    await Promise.all(
+      messages.map(async (message) => {
+        const connection = connectionsByPhoneNumberId.get(
+          message.phoneNumberId,
+        );
 
-      if (!connection || connection.channel !== "whatsapp") {
-        throw new HttpError(404, "WhatsApp connection not found");
-      }
+        if (!connection || connection.channel !== "whatsapp") {
+          throw new HttpError(404, "WhatsApp connection not found");
+        }
 
-      if (connection.status === "disabled") {
-        continue;
-      }
+        if (connection.status === "disabled") {
+          return;
+        }
 
-      const { event, created } = await createConnectionEventIfNew({
-        connectionId: connection.id,
-        externalEventId: message.messageId,
-        eventType: "whatsapp.message",
-        payload: { ...message },
-      });
-
-      if (created) {
-        await enqueueWhatsAppInboundMessage({
-          connectionEventId: event.id,
+        const { event, created } = await createConnectionEventIfNew({
+          connectionId: connection.id,
+          externalEventId: message.messageId,
+          eventType: "whatsapp.message",
+          payload: { ...message },
         });
-      }
-    }
+
+        if (created || event.status === "queued") {
+          await enqueueWhatsAppInboundMessage({
+            connectionEventId: event.id,
+          });
+        }
+      }),
+    );
 
     return response.status(200).json({ ok: true });
   } catch (error) {

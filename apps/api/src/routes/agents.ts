@@ -4,29 +4,36 @@ import {
   createAgentRecord,
   createAgentTool,
   createKnowledgeFile,
+  deleteAgentByIdForUser,
   deleteAgentConnection,
   deleteAgentMcpServer,
   deleteAgentTool,
   deleteKnowledgeFileRecord,
   getAgentConnectionByIdForAgent,
   getAgentByIdForUser,
+  getAgentConversationDetails,
   getKnowledgeFileByIdForAgent,
   getWhatsAppConnectionByPhoneNumberId,
+  listAgentConversations,
   listAgentConnections,
   listAgentMcpServers,
   listAgentTools,
   listAgentsByUserId,
   listKnowledgeFiles,
   setAgentVectorStoreId,
+  updateAgentConfiguration,
   updateAgentConnection,
   updateAgentMcpServer,
   updateAgentTool,
   type Agent,
   type AgentConnection,
+  type AgentConversationDetails,
+  type AgentConversationSummary,
 } from "@repo/db";
 import { appConfig } from "@repo/config";
 import {
   createAgentVectorStore,
+  deleteAgentVectorStore,
   deleteKnowledgeFile as deleteOpenAIKnowledgeFile,
   decryptSecret,
   encryptSecret,
@@ -54,6 +61,11 @@ const generateGuardrailSchema = z.object({
   agentPrompt: z.string().trim().min(10, "Agent prompt is too short"),
 });
 
+const generateStoredAgentGuardrailSchema = z.object({
+  model: z.string().trim().min(1, "Model is required"),
+  agentPrompt: z.string().trim().min(10, "Agent prompt is too short"),
+});
+
 const createAgentSchema = z.object({
   name: z.string().trim().min(2, "Agent name must be at least 2 characters"),
   apiKey: z.string().trim().min(1, "OpenAI API key is required"),
@@ -62,6 +74,15 @@ const createAgentSchema = z.object({
   guardrailEnabled: z.boolean().default(false),
   guardrailPrompt: z.string().trim().optional(),
   metadata: metadataSchema.default({}),
+});
+
+const updateAgentConfigurationSchema = z.object({
+  name: z.string().trim().min(2, "Agent name must be at least 2 characters"),
+  model: z.string().trim().min(1, "Model is required"),
+  instructions: z.string().trim().min(10, "Agent prompt is too short"),
+  status: z.enum(["active", "disabled"]),
+  guardrailEnabled: z.boolean(),
+  guardrailPrompt: z.string().trim().optional(),
 });
 
 const createToolSchema = z.object({
@@ -131,6 +152,13 @@ const updateWhatsAppConnectionSchema = z.object({
   metadata: metadataSchema.optional(),
 });
 
+const conversationListQuerySchema = z.object({
+  channel: z.enum(["whatsapp"]).optional(),
+  connectionId: z.string().uuid().optional(),
+  cursor: z.string().datetime().optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+});
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
@@ -185,12 +213,82 @@ function toPublicConnection(connection: AgentConnection) {
   };
 }
 
+function getMetadataString(
+  metadata: Record<string, unknown> | null,
+  key: string,
+) {
+  const value = metadata?.[key];
+  return typeof value === "string" ? value : null;
+}
+
+function toPublicMessage(
+  message: NonNullable<AgentConversationSummary["lastMessage"]>,
+) {
+  return {
+    id: message.id,
+    conversationId: message.conversationId,
+    role: message.role,
+    content: message.content,
+    metadata: message.metadata,
+    createdAt: message.createdAt,
+  };
+}
+
+function toPublicConversationSummary(summary: AgentConversationSummary) {
+  const conversationMetadata = summary.conversation.metadata;
+  const channelConversation = summary.channelConversation;
+  const connection = summary.connection;
+
+  return {
+    id: summary.conversation.id,
+    agentId: summary.conversation.agentId,
+    userId: summary.conversation.userId,
+    title: summary.conversation.title,
+    channel:
+      connection?.channel ?? getMetadataString(conversationMetadata, "channel"),
+    connectionId:
+      channelConversation?.connectionId ??
+      getMetadataString(conversationMetadata, "connectionId"),
+    connectionName: connection?.name ?? null,
+    externalContactId:
+      channelConversation?.externalContactId ??
+      getMetadataString(conversationMetadata, "externalContactId"),
+    displayName:
+      channelConversation?.displayName ?? summary.conversation.title ?? null,
+    lastMessage: summary.lastMessage
+      ? toPublicMessage(summary.lastMessage)
+      : null,
+    lastMessageAt: summary.lastMessageAt,
+    messageCount: summary.messageCount,
+    metadata: summary.conversation.metadata,
+    channelMetadata: channelConversation?.metadata ?? null,
+    createdAt: summary.conversation.createdAt,
+    updatedAt: summary.conversation.updatedAt,
+  };
+}
+
+function toPublicConversationDetails(details: AgentConversationDetails) {
+  return {
+    conversation: toPublicConversationSummary(details),
+    messages: details.messages.map((message) => toPublicMessage(message)),
+  };
+}
+
 function getOpenAIKey(agent: Agent): string {
   return decryptSecret({
     ciphertext: agent.openaiApiKeyCiphertext,
     iv: agent.openaiApiKeyIv,
     authTag: agent.openaiApiKeyAuthTag,
   });
+}
+
+async function deleteOpenAIKnowledgeFileBestEffort(input: {
+  apiKey: string;
+  vectorStoreId: string;
+  openaiFileId: string;
+  openaiVectorStoreFileId: string;
+}) {
+  await deleteOpenAIKnowledgeFile(input).catch(() => undefined);
 }
 
 function toOpenAIHttpError(error: unknown, fallbackMessage: string): Error {
@@ -239,6 +337,23 @@ function getPathParam(
   }
 
   return value;
+}
+
+function getQueryString(
+  request: { query: Record<string, unknown> },
+  name: string,
+) {
+  const value = request.query[name];
+
+  if (typeof value === "string") {
+    return value.trim() || undefined;
+  }
+
+  if (Array.isArray(value) && typeof value[0] === "string") {
+    return value[0].trim() || undefined;
+  }
+
+  return undefined;
 }
 
 agentsRouter.post("/validate-key", async (request, response, next) => {
@@ -318,6 +433,64 @@ agentsRouter.post("/", async (request, response, next) => {
   }
 });
 
+agentsRouter.patch("/:agentId", async (request, response, next) => {
+  try {
+    const { user } = await requireAuthenticatedUser(request);
+    const agent = await requireAgent(getPathParam(request, "agentId"), user.id);
+    const input = parseBody(updateAgentConfigurationSchema, request.body);
+    const guardrailPrompt =
+      input.guardrailEnabled && !input.guardrailPrompt
+        ? await generateGuardrailPrompt({
+            apiKey: getOpenAIKey(agent),
+            model: input.model,
+            agentPrompt: input.instructions,
+          })
+        : input.guardrailPrompt;
+    const updatedAgent = await updateAgentConfiguration(agent.id, user.id, {
+      name: input.name,
+      model: input.model,
+      instructions: input.instructions,
+      status: input.status,
+      guardrailEnabled: input.guardrailEnabled,
+      guardrailPrompt: input.guardrailEnabled ? guardrailPrompt : null,
+    });
+
+    if (!updatedAgent) {
+      throw new HttpError(404, "Agent not found");
+    }
+
+    return response.status(200).json({ agent: toPublicAgent(updatedAgent) });
+  } catch (error) {
+    next(toOpenAIHttpError(error, "Failed to update agent"));
+  }
+});
+
+agentsRouter.post(
+  "/:agentId/generate-guardrail",
+  async (request, response, next) => {
+    try {
+      const { user } = await requireAuthenticatedUser(request);
+      const agent = await requireAgent(
+        getPathParam(request, "agentId"),
+        user.id,
+      );
+      const input = parseBody(
+        generateStoredAgentGuardrailSchema,
+        request.body,
+      );
+      const guardrailPrompt = await generateGuardrailPrompt({
+        apiKey: getOpenAIKey(agent),
+        model: input.model,
+        agentPrompt: input.agentPrompt,
+      });
+
+      return response.status(200).json({ guardrailPrompt });
+    } catch (error) {
+      next(toOpenAIHttpError(error, "Failed to generate guardrail prompt"));
+    }
+  },
+);
+
 agentsRouter.get("/:agentId", async (request, response, next) => {
   try {
     const { user } = await requireAuthenticatedUser(request);
@@ -338,6 +511,101 @@ agentsRouter.get("/:agentId", async (request, response, next) => {
     });
   } catch (error) {
     next(error);
+  }
+});
+
+agentsRouter.get(
+  "/:agentId/conversations",
+  async (request, response, next) => {
+    try {
+      const { user } = await requireAuthenticatedUser(request);
+      const agent = await requireAgent(
+        getPathParam(request, "agentId"),
+        user.id,
+      );
+      const query = conversationListQuerySchema.parse({
+        channel: getQueryString(request, "channel"),
+        connectionId: getQueryString(request, "connectionId"),
+        cursor: getQueryString(request, "cursor"),
+        limit: getQueryString(request, "limit"),
+      });
+      const conversations = await listAgentConversations({
+        agentId: agent.id,
+        userId: user.id,
+        channel: query.channel,
+        connectionId: query.connectionId,
+        cursor: query.cursor ? new Date(query.cursor) : undefined,
+        limit: query.limit,
+      });
+
+      return response.status(200).json({
+        conversations: conversations.map(toPublicConversationSummary),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+agentsRouter.get(
+  "/:agentId/conversations/:conversationId",
+  async (request, response, next) => {
+    try {
+      const { user } = await requireAuthenticatedUser(request);
+      const agent = await requireAgent(
+        getPathParam(request, "agentId"),
+        user.id,
+      );
+      const details = await getAgentConversationDetails({
+        agentId: agent.id,
+        userId: user.id,
+        conversationId: getPathParam(request, "conversationId"),
+      });
+
+      if (!details) {
+        throw new HttpError(404, "Conversation not found");
+      }
+
+      return response.status(200).json(toPublicConversationDetails(details));
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+agentsRouter.delete("/:agentId", async (request, response, next) => {
+  try {
+    const { user } = await requireAuthenticatedUser(request);
+    const agent = await requireAgent(getPathParam(request, "agentId"), user.id);
+    const apiKey = getOpenAIKey(agent);
+    const knowledgeFiles = await listKnowledgeFiles(agent.id);
+
+    if (agent.openaiVectorStoreId) {
+      await Promise.all(
+        knowledgeFiles.map((file) =>
+          deleteOpenAIKnowledgeFileBestEffort({
+            apiKey,
+            vectorStoreId: agent.openaiVectorStoreId ?? "",
+            openaiFileId: file.openaiFileId,
+            openaiVectorStoreFileId: file.openaiVectorStoreFileId,
+          }),
+        ),
+      );
+      await deleteAgentVectorStore({
+        apiKey,
+        vectorStoreId: agent.openaiVectorStoreId,
+      });
+    }
+
+    const deletedAgent = await deleteAgentByIdForUser(agent.id, user.id);
+
+    if (!deletedAgent) {
+      throw new HttpError(404, "Agent not found");
+    }
+
+    return response.status(200).json({ ok: true });
+  } catch (error) {
+    next(toOpenAIHttpError(error, "Failed to delete agent"));
   }
 });
 
@@ -568,7 +836,7 @@ agentsRouter.post(
           ...uploadedFile,
         });
       } catch (error) {
-        await deleteOpenAIKnowledgeFile({
+        await deleteOpenAIKnowledgeFileBestEffort({
           apiKey,
           vectorStoreId: agent.openaiVectorStoreId,
           openaiFileId: uploadedFile.openaiFileId,

@@ -23,6 +23,7 @@ export class DbAgentSession implements Session {
   private readonly conversationId: string;
   private readonly sessionId: string;
 
+  // This stores OpenAI Agents SDK memory only. Product transcripts live in messages.
   constructor(input: DbAgentSessionInput) {
     this.conversationId = input.conversationId;
     this.sessionId = input.sessionId ?? input.conversationId;
