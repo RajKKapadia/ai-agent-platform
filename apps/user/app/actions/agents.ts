@@ -14,14 +14,21 @@ import {
   generateAgentGuardrail,
   generateStoredAgentGuardrail,
   uploadAgentKnowledgeFile,
+  testAgentTool,
   updateAgentConfiguration,
+  updateAgentTool,
   updateWhatsAppConnection,
   validateOpenAIKey,
 } from "@/lib/api";
 import type {
   ApiAgentConnection,
+  ApiAgentTool,
   CreateAgentInput,
+  CreateToolInput,
+  TestToolInput,
+  ToolTestResult,
   UpdateAgentConfigurationInput,
+  UpdateToolInput,
 } from "@/lib/api-types";
 import { getSessionId } from "@/lib/session";
 import { revalidatePath } from "next/cache";
@@ -62,7 +69,39 @@ const createToolSchema = z.object({
   name: z.string().trim().min(2, "Tool name must be at least 2 characters"),
   description: z.string().trim().optional(),
   enabled: z.boolean().default(true),
-  config: z.string().trim().optional(),
+  config: z.object({
+    type: z.literal("http_api"),
+    method: z.enum(["GET", "POST"]),
+    url: z.string().trim().min(1, "Endpoint URL is required"),
+    parameters: z
+      .array(
+        z.object({
+          name: z.string().trim().min(1, "Parameter name is required"),
+          type: z.enum(["string", "number", "boolean", "object", "array"]),
+          description: z
+            .string()
+            .trim()
+            .min(1, "Parameter description is required"),
+          required: z.boolean(),
+        }),
+      )
+      .default([]),
+    headers: z
+      .array(
+        z.object({
+          name: z.string().trim().min(1, "Header name is required"),
+          value: z.string().optional(),
+          valuePreview: z.string().optional(),
+        }),
+      )
+      .default([]),
+  }),
+});
+
+const testToolSchema = z.object({
+  toolId: z.string().optional(),
+  config: createToolSchema.shape.config,
+  parameters: z.record(z.unknown()).default({}),
 });
 
 const createMcpServerSchema = z.object({
@@ -391,15 +430,9 @@ export async function deleteConnectionAction(
 
 export async function createToolAction(
   agentId: string,
-  _previousState: AgentActionResult,
-  formData: FormData,
-): Promise<AgentActionResult> {
-  const parsed = createToolSchema.safeParse({
-    name: getString(formData, "name"),
-    description: getString(formData, "description") || undefined,
-    enabled: getBoolean(formData, "enabled"),
-    config: getString(formData, "config") || undefined,
-  });
+  input: CreateToolInput,
+): Promise<AgentActionResult<{ tool: ApiAgentTool }>> {
+  const parsed = createToolSchema.safeParse(input);
 
   if (!parsed.success) {
     return { fieldErrors: parsed.error.flatten().fieldErrors };
@@ -407,24 +440,70 @@ export async function createToolAction(
 
   try {
     const sessionId = await requireSessionId();
-    await createAgentTool(sessionId, agentId, {
-      name: parsed.data.name,
-      description: parsed.data.description,
-      enabled: parsed.data.enabled,
-      config: parseJsonRecord(parsed.data.config),
-    });
+    const tool = await createAgentTool(sessionId, agentId, parsed.data);
     revalidatePath(`/agents/${agentId}`);
 
-    return {};
+    return { data: { tool }, success: true };
   } catch (error) {
     return actionError(error);
   }
 }
 
-export async function deleteToolAction(agentId: string, toolId: string) {
-  const sessionId = await requireSessionId();
-  await deleteAgentTool(sessionId, agentId, toolId);
-  revalidatePath(`/agents/${agentId}`);
+export async function updateToolAction(
+  agentId: string,
+  toolId: string,
+  input: UpdateToolInput,
+): Promise<AgentActionResult<{ tool: ApiAgentTool }>> {
+  const parsed = createToolSchema.safeParse(input);
+
+  if (!parsed.success) {
+    return { fieldErrors: parsed.error.flatten().fieldErrors };
+  }
+
+  try {
+    const sessionId = await requireSessionId();
+    const tool = await updateAgentTool(sessionId, agentId, toolId, parsed.data);
+    revalidatePath(`/agents/${agentId}`);
+
+    return { data: { tool }, success: true };
+  } catch (error) {
+    return actionError(error);
+  }
+}
+
+export async function testToolAction(
+  agentId: string,
+  input: TestToolInput,
+): Promise<AgentActionResult<{ result: ToolTestResult }>> {
+  const parsed = testToolSchema.safeParse(input);
+
+  if (!parsed.success) {
+    return { fieldErrors: parsed.error.flatten().fieldErrors };
+  }
+
+  try {
+    const sessionId = await requireSessionId();
+    const result = await testAgentTool(sessionId, agentId, parsed.data);
+
+    return { data: { result }, success: true };
+  } catch (error) {
+    return actionError(error);
+  }
+}
+
+export async function deleteToolAction(
+  agentId: string,
+  toolId: string,
+): Promise<AgentActionResult> {
+  try {
+    const sessionId = await requireSessionId();
+    await deleteAgentTool(sessionId, agentId, toolId);
+    revalidatePath(`/agents/${agentId}`);
+
+    return { success: true };
+  } catch (error) {
+    return actionError(error);
+  }
 }
 
 export async function createMcpServerAction(

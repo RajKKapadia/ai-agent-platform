@@ -5,7 +5,6 @@ import {
   deleteConnectionAction,
   deleteKnowledgeFileAction,
   deleteMcpServerAction,
-  deleteToolAction,
   generateStoredAgentGuardrailAction,
   updateAgentConfigurationAction,
 } from "@/app/actions/agents";
@@ -14,7 +13,7 @@ import {
   CopyValue,
   KnowledgeUploadForm,
   McpServerCreateForm,
-  ToolCreateForm,
+  ToolManager,
   WhatsAppConnectionEditForm,
   WhatsAppConnectionCreateForm,
 } from "@/components/agents/agent-resource-forms";
@@ -780,39 +779,7 @@ export function AgentDetailTabs({
             <CardDescription>{details.tools.length} tools</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <ToolCreateForm agentId={details.agent.id} />
-            <div className="divide-y divide-zinc-200 rounded-md border border-zinc-200">
-              {details.tools.length > 0 ? (
-                details.tools.map((tool) => (
-                  <div
-                    className="flex items-center justify-between gap-4 p-3"
-                    key={tool.id}
-                  >
-                    <div>
-                      <p className="text-sm font-medium text-zinc-950">
-                        {tool.name}
-                      </p>
-                      <p className="text-sm text-zinc-500">
-                        {tool.enabled ? "enabled" : "disabled"}
-                      </p>
-                    </div>
-                    <form
-                      action={deleteToolAction.bind(
-                        null,
-                        details.agent.id,
-                        tool.id,
-                      )}
-                    >
-                      <Button size="sm" type="submit" variant="outline">
-                        <Trash2 className="size-4" />
-                      </Button>
-                    </form>
-                  </div>
-                ))
-              ) : (
-                <p className="p-3 text-sm text-zinc-500">No tools</p>
-              )}
-            </div>
+            <ToolManager agentId={details.agent.id} tools={details.tools} />
           </CardContent>
         </Card>
       </TabsContent>

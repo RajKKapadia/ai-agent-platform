@@ -1,6 +1,7 @@
 export * from "./context";
 export * from "./conversation-events";
 export * from "./crypto";
+export * from "./http-tools";
 export * from "./openai-service";
 export * from "./queue";
 export * from "./runtime";

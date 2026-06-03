@@ -4,12 +4,13 @@ import {
   Runner,
   fileSearchTool,
   hostedMcpTool,
-  type HostedTool,
   type RunConfig,
   type Session,
+  type Tool,
 } from "@openai/agents";
-import type { Agent as DbAgent, AgentMcpServer } from "@repo/db";
+import type { Agent as DbAgent, AgentMcpServer, AgentTool } from "@repo/db";
 import type { AgentUserContext } from "./context";
+import { buildHttpApiFunctionTool } from "./http-tools";
 
 export interface AgentRuntime {
   agent: Agent<AgentUserContext>;
@@ -20,8 +21,9 @@ export function buildAgentRuntime(input: {
   agent: DbAgent;
   apiKey: string;
   mcpServers?: AgentMcpServer[];
+  agentTools?: AgentTool[];
 }): AgentRuntime {
-  const tools: HostedTool[] = [];
+  const tools: Tool<AgentUserContext>[] = [];
 
   if (input.agent.openaiVectorStoreId) {
     tools.push(fileSearchTool([input.agent.openaiVectorStoreId]));
@@ -44,6 +46,14 @@ export function buildAgentRuntime(input: {
           : hostedMcpConfig,
       ),
     );
+  }
+
+  for (const agentTool of input.agentTools ?? []) {
+    const functionTool = buildHttpApiFunctionTool(agentTool);
+
+    if (functionTool) {
+      tools.push(functionTool);
+    }
   }
 
   const instructions = input.agent.guardrailEnabled
@@ -75,6 +85,7 @@ export async function runAgentTextResponse(input: {
   agent: DbAgent;
   apiKey: string;
   mcpServers?: AgentMcpServer[];
+  agentTools?: AgentTool[];
   message: string;
   session: Session;
   context: AgentUserContext;

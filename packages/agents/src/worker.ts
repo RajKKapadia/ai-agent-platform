@@ -7,6 +7,7 @@ import {
   getConnectionEventById,
   getMessageByDedupeKey,
   listAgentMcpServers,
+  listAgentTools,
   updateConnectionEventStatus,
   type Agent,
   type AgentConnection,
@@ -212,10 +213,12 @@ export async function processWhatsAppInboundMessage(input: {
       authTag: agent.openaiApiKeyAuthTag,
     });
     const mcpServers = await listAgentMcpServers(agent.id);
+    const agentTools = await listAgentTools(agent.id);
     const generatedText = await runAgentTextResponse({
       agent,
       apiKey,
       mcpServers,
+      agentTools,
       message: event.payload.text,
       session,
       context: userContext,

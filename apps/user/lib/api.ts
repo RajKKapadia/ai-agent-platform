@@ -17,7 +17,10 @@ import type {
   CreateToolInput,
   LoginInput,
   RegisterInput,
+  TestToolInput,
+  ToolTestResult,
   UpdateAgentConfigurationInput,
+  UpdateToolInput,
   UpdateWhatsAppConnectionInput,
 } from "@/lib/api-types";
 import { getRuntimeApiConfig } from "@repo/config/runtime";
@@ -39,7 +42,10 @@ export type {
   CreateToolInput,
   LoginInput,
   RegisterInput,
+  TestToolInput,
+  ToolTestResult,
   UpdateAgentConfigurationInput,
+  UpdateToolInput,
   UpdateWhatsAppConnectionInput,
 } from "@/lib/api-types";
 
@@ -69,6 +75,10 @@ interface KnowledgeFileResponse {
 
 interface ToolResponse {
   tool: ApiAgentTool;
+}
+
+interface ToolTestResponse {
+  result: ToolTestResult;
 }
 
 interface McpServerResponse {
@@ -432,6 +442,41 @@ export async function createAgentTool(
   });
 
   return response.tool;
+}
+
+export async function updateAgentTool(
+  sessionId: string,
+  agentId: string,
+  toolId: string,
+  input: UpdateToolInput,
+): Promise<ApiAgentTool> {
+  const response = await requestApi<ToolResponse>(
+    `/agents/${agentId}/tools/${toolId}`,
+    {
+      method: "PATCH",
+      headers: authHeaders(sessionId),
+      body: JSON.stringify(input),
+    },
+  );
+
+  return response.tool;
+}
+
+export async function testAgentTool(
+  sessionId: string,
+  agentId: string,
+  input: TestToolInput,
+): Promise<ToolTestResult> {
+  const response = await requestApi<ToolTestResponse>(
+    `/agents/${agentId}/tools/test`,
+    {
+      method: "POST",
+      headers: authHeaders(sessionId),
+      body: JSON.stringify(input),
+    },
+  );
+
+  return response.result;
 }
 
 export async function deleteAgentTool(

@@ -12,6 +12,7 @@ import {
   getAgentConnectionByIdForAgent,
   getAgentByIdForUser,
   getAgentConversationDetails,
+  getAgentToolByIdForAgent,
   getKnowledgeFileByIdForAgent,
   getWhatsAppConnectionByPhoneNumberId,
   listAgentConversations,
@@ -29,17 +30,22 @@ import {
   type AgentConnection,
   type AgentConversationDetails,
   type AgentConversationSummary,
+  type AgentTool,
 } from "@repo/db";
 import { appConfig } from "@repo/config";
 import {
   createAgentVectorStore,
+  assertValidToolName,
+  createStoredHttpApiToolConfig,
   deleteAgentVectorStore,
   deleteKnowledgeFile as deleteOpenAIKnowledgeFile,
   decryptSecret,
   encryptSecret,
+  executeHttpApiTool,
   generateGuardrailPrompt,
   generateVerificationToken,
   hashSecret,
+  toPublicHttpApiToolConfig,
   uploadKnowledgeFile as uploadOpenAIKnowledgeFile,
   validateOpenAIKey,
 } from "@repo/agents";
@@ -85,14 +91,40 @@ const updateAgentConfigurationSchema = z.object({
   guardrailPrompt: z.string().trim().optional(),
 });
 
+const toolParameterSchema = z.object({
+  name: z.string().trim().min(1, "Parameter name is required"),
+  type: z.enum(["string", "number", "boolean", "object", "array"]),
+  description: z.string().trim().min(1, "Parameter description is required"),
+  required: z.boolean().default(false),
+});
+
+const toolHeaderSchema = z.object({
+  name: z.string().trim().min(1, "Header name is required"),
+  value: z.string().optional(),
+});
+
+const toolConfigSchema = z.object({
+  type: z.literal("http_api").default("http_api"),
+  method: z.enum(["GET", "POST"]),
+  url: z.string().trim().min(1, "Endpoint URL is required"),
+  parameters: z.array(toolParameterSchema).default([]),
+  headers: z.array(toolHeaderSchema).default([]),
+});
+
 const createToolSchema = z.object({
   name: z.string().trim().min(2, "Tool name must be at least 2 characters"),
   description: z.string().trim().optional(),
   enabled: z.boolean().default(true),
-  config: metadataSchema.default({}),
+  config: toolConfigSchema,
 });
 
-const updateToolSchema = createToolSchema.partial();
+const updateToolSchema = createToolSchema;
+
+const testToolSchema = z.object({
+  toolId: z.string().uuid().optional(),
+  config: toolConfigSchema,
+  parameters: z.record(z.string(), z.unknown()).default({}),
+});
 
 const mcpServerBaseSchema = z.object({
   name: z.string().trim().min(2, "MCP name must be at least 2 characters"),
@@ -213,6 +245,13 @@ function toPublicConnection(connection: AgentConnection) {
   };
 }
 
+function toPublicTool(tool: AgentTool) {
+  return {
+    ...tool,
+    config: toPublicHttpApiToolConfig(tool.config),
+  };
+}
+
 function getMetadataString(
   metadata: Record<string, unknown> | null,
   key: string,
@@ -316,6 +355,18 @@ function toOpenAIHttpError(error: unknown, fallbackMessage: string): Error {
   return error instanceof Error ? error : new Error(fallbackMessage);
 }
 
+function toToolHttpError(error: unknown): Error {
+  if (error instanceof HttpError) {
+    return error;
+  }
+
+  if (error instanceof Error) {
+    return new HttpError(400, error.message);
+  }
+
+  return new HttpError(400, "Invalid tool configuration");
+}
+
 async function requireAgent(agentId: string, userId: string) {
   const agent = await getAgentByIdForUser(agentId, userId);
 
@@ -324,6 +375,26 @@ async function requireAgent(agentId: string, userId: string) {
   }
 
   return agent;
+}
+
+async function assertAgentToolNameAvailable(input: {
+  agentId: string;
+  name: string;
+  excludeToolId?: string;
+}) {
+  const normalizedName = assertValidToolName(input.name);
+  const tools = await listAgentTools(input.agentId);
+  const existingTool = tools.find(
+    (tool) =>
+      tool.name.toLowerCase() === normalizedName.toLowerCase() &&
+      tool.id !== input.excludeToolId,
+  );
+
+  if (existingTool) {
+    throw new HttpError(409, "A tool with this name already exists");
+  }
+
+  return normalizedName;
 }
 
 function getPathParam(
@@ -505,7 +576,7 @@ agentsRouter.get("/:agentId", async (request, response, next) => {
     return response.status(200).json({
       agent: toPublicAgent(agent),
       knowledgeFiles,
-      tools,
+      tools: tools.map(toPublicTool),
       mcpServers,
       connections: connections.map(toPublicConnection),
     });
@@ -894,14 +965,52 @@ agentsRouter.post("/:agentId/tools", async (request, response, next) => {
     const { user } = await requireAuthenticatedUser(request);
     const agent = await requireAgent(getPathParam(request, "agentId"), user.id);
     const input = parseBody(createToolSchema, request.body);
+    const name = await assertAgentToolNameAvailable({
+      agentId: agent.id,
+      name: input.name,
+    });
+    const config = createStoredHttpApiToolConfig({
+      config: input.config,
+    });
     const tool = await createAgentTool({
       agentId: agent.id,
-      ...input,
+      name,
+      description: input.description,
+      enabled: input.enabled,
+      config,
     });
 
-    return response.status(201).json({ tool });
+    return response.status(201).json({ tool: toPublicTool(tool) });
   } catch (error) {
-    next(error);
+    next(toToolHttpError(error));
+  }
+});
+
+agentsRouter.post("/:agentId/tools/test", async (request, response, next) => {
+  try {
+    const { user } = await requireAuthenticatedUser(request);
+    const agent = await requireAgent(getPathParam(request, "agentId"), user.id);
+    const input = parseBody(testToolSchema, request.body);
+    const existingTool = input.toolId
+      ? await getAgentToolByIdForAgent(input.toolId, agent.id)
+      : null;
+
+    if (input.toolId && !existingTool) {
+      throw new HttpError(404, "Tool not found");
+    }
+
+    const config = createStoredHttpApiToolConfig({
+      config: input.config,
+      existingConfig: existingTool?.config,
+    });
+    const result = await executeHttpApiTool({
+      config,
+      parameters: input.parameters,
+    });
+
+    return response.status(200).json({ result });
+  } catch (error) {
+    next(toToolHttpError(error));
   }
 });
 
@@ -915,19 +1024,40 @@ agentsRouter.patch(
         user.id,
       );
       const input = parseBody(updateToolSchema, request.body);
+      const toolId = getPathParam(request, "toolId");
+      const existingTool = await getAgentToolByIdForAgent(toolId, agent.id);
+
+      if (!existingTool) {
+        throw new HttpError(404, "Tool not found");
+      }
+
+      const name = await assertAgentToolNameAvailable({
+        agentId: agent.id,
+        name: input.name,
+        excludeToolId: toolId,
+      });
+      const config = createStoredHttpApiToolConfig({
+        config: input.config,
+        existingConfig: existingTool.config,
+      });
       const tool = await updateAgentTool(
-        getPathParam(request, "toolId"),
+        toolId,
         agent.id,
-        input,
+        {
+          name,
+          description: input.description,
+          enabled: input.enabled,
+          config,
+        },
       );
 
       if (!tool) {
         throw new HttpError(404, "Tool not found");
       }
 
-      return response.status(200).json({ tool });
+      return response.status(200).json({ tool: toPublicTool(tool) });
     } catch (error) {
-      next(error);
+      next(toToolHttpError(error));
     }
   },
 );

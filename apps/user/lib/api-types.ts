@@ -52,13 +52,41 @@ export interface ApiKnowledgeFile {
   updatedAt: string;
 }
 
+export type ToolParameterType =
+  | "string"
+  | "number"
+  | "boolean"
+  | "object"
+  | "array";
+
+export interface ApiToolParameter {
+  name: string;
+  type: ToolParameterType;
+  description: string;
+  required: boolean;
+}
+
+export interface ApiToolHeader {
+  name: string;
+  value?: string;
+  valuePreview?: string;
+}
+
+export interface HttpApiToolConfig {
+  type: "http_api";
+  method: "GET" | "POST";
+  url: string;
+  parameters: ApiToolParameter[];
+  headers: ApiToolHeader[];
+}
+
 export interface ApiAgentTool {
   id: string;
   agentId: string;
   name: string;
   description: string | null;
   enabled: boolean;
-  config: Record<string, unknown> | null;
+  config: HttpApiToolConfig | Record<string, unknown> | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -158,7 +186,22 @@ export interface CreateToolInput {
   name: string;
   description?: string;
   enabled: boolean;
-  config: Record<string, unknown>;
+  config: HttpApiToolConfig;
+}
+
+export type UpdateToolInput = CreateToolInput;
+
+export interface TestToolInput {
+  toolId?: string;
+  config: HttpApiToolConfig;
+  parameters: Record<string, unknown>;
+}
+
+export interface ToolTestResult {
+  ok: boolean;
+  status: number;
+  bodyPreview: string;
+  headersPreview: Record<string, string>;
 }
 
 export interface CreateMcpServerInput {

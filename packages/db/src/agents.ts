@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, lt, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, lt, sql, type SQL } from "drizzle-orm";
 import { db } from "./client";
 import {
   agentConnections,
@@ -369,6 +369,15 @@ export async function listAgentTools(agentId: string) {
     .orderBy(asc(agentTools.createdAt));
 }
 
+export async function getAgentToolByIdForAgent(id: string, agentId: string) {
+  const [tool] = await db
+    .select()
+    .from(agentTools)
+    .where(and(eq(agentTools.id, id), eq(agentTools.agentId, agentId)));
+
+  return tool ?? null;
+}
+
 export async function createAgentTool(input: CreateToolInput) {
   const values: NewAgentTool = {
     agentId: input.agentId,
@@ -690,9 +699,66 @@ export async function createMessageRecord(input: NewMessage) {
   return message;
 }
 
+function getRecordString(
+  value: Record<string, unknown> | null | undefined,
+  key: string,
+): string | undefined {
+  const recordValue = value?.[key];
+
+  return typeof recordValue === "string" && recordValue.trim()
+    ? recordValue.trim()
+    : undefined;
+}
+
+async function getExistingUserMessageByExternalId(
+  input: NewMessage,
+): Promise<Message | null> {
+  if (input.role !== "user") {
+    return null;
+  }
+
+  const connectionId = getRecordString(input.metadata, "connectionId");
+  const externalMessageId = getRecordString(
+    input.metadata,
+    "externalMessageId",
+  );
+
+  if (!connectionId || !externalMessageId) {
+    return null;
+  }
+
+  const [message] = await db
+    .select()
+    .from(messages)
+    .where(
+      and(
+        eq(messages.conversationId, input.conversationId),
+        eq(messages.role, "user"),
+        sql`${messages.metadata}->>'connectionId' = ${connectionId}`,
+        sql`${messages.metadata}->>'externalMessageId' = ${externalMessageId}`,
+      ),
+    )
+    .orderBy(
+      desc(sql<boolean>`${messages.dedupeKey} is not null`),
+      desc(sql<boolean>`${messages.connectionEventId} is not null`),
+      asc(messages.createdAt),
+    )
+    .limit(1);
+
+  return message ?? null;
+}
+
 export async function createMessageRecordIfNew(
   input: NewMessage,
 ): Promise<{ message: Message; created: boolean }> {
+  const existingExternalMessage = await getExistingUserMessageByExternalId(
+    input,
+  );
+
+  if (existingExternalMessage) {
+    return { message: existingExternalMessage, created: false };
+  }
+
   if (input.dedupeKey) {
     const [createdMessage] = await db
       .insert(messages)
@@ -732,6 +798,52 @@ export async function createMessageRecordIfNew(
   return { message, created: true };
 }
 
+function getTranscriptDedupeKey(message: Message): string {
+  const connectionId = getRecordString(message.metadata, "connectionId");
+  const externalMessageId = getRecordString(
+    message.metadata,
+    "externalMessageId",
+  );
+
+  if (message.role === "user" && connectionId && externalMessageId) {
+    return [
+      message.conversationId,
+      message.role,
+      connectionId,
+      externalMessageId,
+    ].join(":");
+  }
+
+  return message.dedupeKey
+    ? `${message.conversationId}:${message.dedupeKey}`
+    : message.id;
+}
+
+function getTranscriptMessageRank(message: Message): number {
+  return Number(Boolean(message.dedupeKey)) * 2 +
+    Number(Boolean(message.connectionEventId));
+}
+
+function dedupeTranscriptMessages(conversationMessages: Message[]): Message[] {
+  const messagesByKey = new Map<string, Message>();
+
+  for (const message of conversationMessages) {
+    const key = getTranscriptDedupeKey(message);
+    const existing = messagesByKey.get(key);
+
+    if (
+      !existing ||
+      getTranscriptMessageRank(message) > getTranscriptMessageRank(existing)
+    ) {
+      messagesByKey.set(key, message);
+    }
+  }
+
+  return Array.from(messagesByKey.values()).sort(
+    (left, right) => left.createdAt.getTime() - right.createdAt.getTime(),
+  );
+}
+
 export async function getMessageByDedupeKey(
   conversationId: string,
   dedupeKey: string,
@@ -759,7 +871,6 @@ export async function listAgentConversations(
       lastMessageAt: sql<Date>`max(${messages.createdAt})`.as(
         "last_message_at",
       ),
-      messageCount: count(messages.id).as("message_count"),
     })
     .from(messages)
     .groupBy(messages.conversationId)
@@ -788,7 +899,6 @@ export async function listAgentConversations(
       channelConversation: channelConversations,
       connection: agentConnections,
       lastMessageAt: messageStats.lastMessageAt,
-      messageCount: messageStats.messageCount,
     })
     .from(conversations)
     .leftJoin(
@@ -809,12 +919,16 @@ export async function listAgentConversations(
 
   return Promise.all(
     rows.map(async (row) => {
-      const [lastMessage] = await db
+      const conversationMessages = await db
         .select()
         .from(messages)
         .where(eq(messages.conversationId, row.conversation.id))
-        .orderBy(desc(messages.createdAt))
-        .limit(1);
+        .orderBy(asc(messages.createdAt));
+      const visibleMessages = dedupeTranscriptMessages(conversationMessages);
+      const lastMessage =
+        visibleMessages.length > 0
+          ? (visibleMessages[visibleMessages.length - 1] ?? null)
+          : null;
 
       return {
         conversation: row.conversation,
@@ -822,8 +936,8 @@ export async function listAgentConversations(
         connection: row.connection,
         lastMessage: lastMessage ?? null,
         lastMessageAt:
-          row.lastMessageAt ?? lastMessage?.createdAt ?? row.conversation.createdAt,
-        messageCount: Number(row.messageCount ?? 0),
+          lastMessage?.createdAt ?? row.lastMessageAt ?? row.conversation.createdAt,
+        messageCount: visibleMessages.length,
       };
     }),
   );
@@ -866,9 +980,10 @@ export async function getAgentConversationDetails(input: {
     .from(messages)
     .where(eq(messages.conversationId, row.conversation.id))
     .orderBy(asc(messages.createdAt));
+  const visibleMessages = dedupeTranscriptMessages(conversationMessages);
   const lastMessage =
-    conversationMessages.length > 0
-      ? (conversationMessages[conversationMessages.length - 1] ?? null)
+    visibleMessages.length > 0
+      ? (visibleMessages[visibleMessages.length - 1] ?? null)
       : null;
 
   return {
@@ -877,8 +992,8 @@ export async function getAgentConversationDetails(input: {
     connection: row.connection,
     lastMessage,
     lastMessageAt: lastMessage?.createdAt ?? row.conversation.createdAt,
-    messageCount: conversationMessages.length,
-    messages: conversationMessages,
+    messageCount: visibleMessages.length,
+    messages: visibleMessages,
   };
 }
 
